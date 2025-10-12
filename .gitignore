@@ -1,0 +1,6 @@
+NEON_SERVERLESS_DRIVER.md
+test/
+bin/
+.env
+!.env.example
+queries.http
