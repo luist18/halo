@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/luist18/halo/pkg"
+	"github.com/luist18/halo/internal/secret"
 )
 
 const (
@@ -18,7 +18,7 @@ const (
 )
 
 type headers struct {
-	ConnectionString    *pkg.Secret
+	ConnectionString    *secret.Secret
 	RawTextOutput       bool
 	ArrayMode           bool
 	PoolOptIn           bool
@@ -29,7 +29,7 @@ type headers struct {
 
 func parseHeaders(r *http.Request) headers {
 	return headers{
-		ConnectionString:    pkg.NewSecret(strings.TrimSpace(r.Header.Get(ConnectionStringHeader))),
+		ConnectionString:    secret.NewSecret(strings.TrimSpace(r.Header.Get(ConnectionStringHeader))),
 		RawTextOutput:       headerOrDefault(r, RawTextOutputHeader, "true", strings.TrimSpace, strings.ToLower) == "true",
 		ArrayMode:           headerOrDefault(r, ArrayModeHeader, "true", strings.TrimSpace, strings.ToLower) == "true",
 		PoolOptIn:           headerOrDefault(r, PoolOptInHeader, "true", strings.TrimSpace, strings.ToLower) == "true",

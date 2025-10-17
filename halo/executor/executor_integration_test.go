@@ -1,4 +1,4 @@
-package pkg
+package executor
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/joho/godotenv"
+	"github.com/luist18/halo/internal/secret"
 	"github.com/stretchr/testify/require"
 )
 
@@ -122,7 +123,7 @@ func TestBatchTransactionCommit(t *testing.T) {
 		{Query: fmt.Sprintf("INSERT INTO %s (name) VALUES ($1)", tableName), Params: []interface{}{"Charlie"}},
 	})
 
-	result, err := Execute(ctx, *NewSecret(connStr), payload, Options{
+	result, err := Execute(ctx, *secret.NewSecret(connStr), payload, Options{
 		BatchIsolationLevel: "ReadCommitted",
 	})
 
@@ -152,7 +153,7 @@ func TestBatchTransactionRollback(t *testing.T) {
 		{Query: fmt.Sprintf("INSERT INTO %s (email) VALUES ($1)", tableName), Params: []interface{}{"test@example.com"}}, // Duplicate!
 	})
 
-	result, err := Execute(ctx, *NewSecret(connStr), payload, Options{
+	result, err := Execute(ctx, *secret.NewSecret(connStr), payload, Options{
 		BatchIsolationLevel: "ReadCommitted",
 	})
 
@@ -182,7 +183,7 @@ func TestIsolationLevelReadCommitted(t *testing.T) {
 		{Query: fmt.Sprintf("INSERT INTO %s (value) VALUES ($1)", tableName), Params: []interface{}{100}},
 	})
 
-	result, err := Execute(ctx, *NewSecret(connStr), payload, Options{
+	result, err := Execute(ctx, *secret.NewSecret(connStr), payload, Options{
 		BatchIsolationLevel: "ReadCommitted",
 	})
 
@@ -207,7 +208,7 @@ func TestIsolationLevelSerializable(t *testing.T) {
 		{Query: fmt.Sprintf("INSERT INTO %s (value) VALUES ($1)", tableName), Params: []interface{}{200}},
 	})
 
-	result, err := Execute(ctx, *NewSecret(connStr), payload, Options{
+	result, err := Execute(ctx, *secret.NewSecret(connStr), payload, Options{
 		BatchIsolationLevel: "Serializable",
 	})
 
@@ -232,7 +233,7 @@ func TestIsolationLevelRepeatableRead(t *testing.T) {
 		{Query: fmt.Sprintf("INSERT INTO %s (value) VALUES ($1)", tableName), Params: []interface{}{300}},
 	})
 
-	result, err := Execute(ctx, *NewSecret(connStr), payload, Options{
+	result, err := Execute(ctx, *secret.NewSecret(connStr), payload, Options{
 		BatchIsolationLevel: "RepeatableRead",
 	})
 
@@ -253,7 +254,7 @@ func TestInvalidIsolationLevel(t *testing.T) {
 		{Query: fmt.Sprintf("INSERT INTO %s DEFAULT VALUES", tableName), Params: []interface{}{}},
 	})
 
-	_, err = Execute(ctx, *NewSecret(connStr), payload, Options{
+	_, err = Execute(ctx, *secret.NewSecret(connStr), payload, Options{
 		BatchIsolationLevel: "InvalidLevel",
 	})
 
@@ -275,7 +276,7 @@ func TestReadOnlyMode(t *testing.T) {
 		{Query: fmt.Sprintf("INSERT INTO %s (name) VALUES ($1)", tableName), Params: []interface{}{"test"}},
 	})
 
-	_, err = Execute(ctx, *NewSecret(connStr), payload, Options{
+	_, err = Execute(ctx, *secret.NewSecret(connStr), payload, Options{
 		BatchIsolationLevel: "ReadCommitted",
 		BatchReadOnly:       true,
 	})
@@ -308,7 +309,7 @@ func TestReadOnlyModeAllowsReads(t *testing.T) {
 		{Query: fmt.Sprintf("SELECT * FROM %s", tableName), Params: []interface{}{}},
 	})
 
-	result, err := Execute(ctx, *NewSecret(connStr), payload, Options{
+	result, err := Execute(ctx, *secret.NewSecret(connStr), payload, Options{
 		BatchIsolationLevel: "ReadCommitted",
 		BatchReadOnly:       true,
 	})
@@ -335,7 +336,7 @@ func TestSleepInTransaction(t *testing.T) {
 		{Query: fmt.Sprintf("SELECT value FROM %s WHERE value = $1", tableName), Params: []interface{}{42}},
 	})
 
-	result, err := Execute(ctx, *NewSecret(connStr), payload, Options{
+	result, err := Execute(ctx, *secret.NewSecret(connStr), payload, Options{
 		BatchIsolationLevel: "ReadCommitted",
 	})
 
@@ -372,7 +373,7 @@ func TestConcurrentBatches(t *testing.T) {
 				{Query: fmt.Sprintf("INSERT INTO %s (thread_id, value) VALUES ($1, $2)", tableName), Params: []interface{}{threadID, threadID*100 + 1}},
 			})
 
-			_, err := Execute(ctx, *NewSecret(connStr), payload, Options{
+			_, err := Execute(ctx, *secret.NewSecret(connStr), payload, Options{
 				BatchIsolationLevel: "ReadCommitted",
 			})
 			errors[threadID] = err
@@ -415,7 +416,7 @@ func TestDirtyReadPrevention(t *testing.T) {
 			{Query: fmt.Sprintf("INSERT INTO %s (value) VALUES ($1)", tableName), Params: []interface{}{100}},
 			{Query: "SELECT pg_sleep(0.5)", Params: []interface{}{}},
 		})
-		_, _ = Execute(ctx, *NewSecret(connStr), payload, Options{
+		_, _ = Execute(ctx, *secret.NewSecret(connStr), payload, Options{
 			BatchIsolationLevel: "ReadCommitted",
 		})
 	}()
@@ -427,7 +428,7 @@ func TestDirtyReadPrevention(t *testing.T) {
 		payload := buildBatchPayload([]QueryItem{
 			{Query: fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName), Params: []interface{}{}},
 		})
-		_, _ = Execute(ctx, *NewSecret(connStr), payload, Options{
+		_, _ = Execute(ctx, *secret.NewSecret(connStr), payload, Options{
 			BatchIsolationLevel: "ReadCommitted",
 		})
 	}()
@@ -461,7 +462,7 @@ func TestLongTransaction(t *testing.T) {
 
 	payload := buildBatchPayload(queries)
 
-	result, err := Execute(ctx, *NewSecret(connStr), payload, Options{
+	result, err := Execute(ctx, *secret.NewSecret(connStr), payload, Options{
 		BatchIsolationLevel: "ReadCommitted",
 	})
 
@@ -492,7 +493,7 @@ func TestSingleQueryDoesNotUseTransaction(t *testing.T) {
 		Params: []interface{}{999},
 	}
 
-	result, err := Execute(ctx, *NewSecret(connStr), payload, Options{
+	result, err := Execute(ctx, *secret.NewSecret(connStr), payload, Options{
 		BatchIsolationLevel: "ReadCommitted",
 	})
 

@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/luist18/halo/pkg"
+	"github.com/luist18/halo/executor"
 )
 
 func main() {
@@ -24,7 +24,7 @@ func main() {
 
 			slog.Info("parsed payload", slog.String("query", payload.Query), slog.Int("num-queries", len(payload.Queries)))
 
-			opts := pkg.Options{
+			opts := executor.Options{
 				RawTextOutput:       headers.RawTextOutput,
 				ArrayMode:           headers.ArrayMode,
 				PoolOptIn:           headers.PoolOptIn,
@@ -33,11 +33,13 @@ func main() {
 				BatchDeferrable:     headers.BatchDeferrable,
 			}
 
-			result, err := pkg.Execute(r.Context(), *headers.ConnectionString, pkg.Payload{
+			result, err := executor.Execute(r.Context(), *headers.ConnectionString, executor.Payload{
 				Query:   payload.Query,
 				Params:  payload.Params,
 				Queries: payload.Queries,
-			}, opts)
+			},
+				opts,
+			)
 			if err != nil {
 				slog.Error("failed to execute query", slog.String("error", err.Error()))
 				http.Error(w, err.Error(), http.StatusInternalServerError)

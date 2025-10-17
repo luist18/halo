@@ -1,4 +1,4 @@
-package pkg
+package executor
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/luist18/halo/internal/secret"
 )
 
 var ErrInvalidQueryMode = errors.New("invalid query mode")
@@ -46,7 +47,7 @@ type ExecutorResult struct {
 	IsBatch bool
 }
 
-func Execute(ctx context.Context, connStrSecret Secret, payload Payload, opts Options) (ExecutorResult, error) {
+func Execute(ctx context.Context, connStrSecret secret.Secret, payload Payload, opts Options) (ExecutorResult, error) {
 	connStr := connStrSecret.Unwrap()
 	if connStr == "" {
 		return ExecutorResult{}, ErrInvalidConnectionString

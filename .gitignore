@@ -4,3 +4,4 @@ bin/
 .env
 !.env.example
 queries.http
+.DS_Store
