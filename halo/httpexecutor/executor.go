@@ -1,4 +1,4 @@
-package executor
+package httpexecutor
 
 import (
 	"context"
@@ -52,10 +52,6 @@ func Execute(ctx context.Context, connStrSecret secret.Secret, payload Payload, 
 	if connStr == "" {
 		return ExecutorResult{}, ErrInvalidConnectionString
 	}
-
-	// TODO(PER-2): check if conn str is a postgres one
-
-	// TODO(PER-3): max payload
 
 	// TODO: read other configuration parameters
 

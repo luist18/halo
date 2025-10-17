@@ -6,7 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/luist18/halo/executor"
+	"github.com/luist18/halo/httpexecutor"
+	"github.com/luist18/halo/internal/connstr"
 )
 
 func main() {
@@ -16,6 +17,28 @@ func main() {
 			headers := parseHeaders(r)
 			slog.Info("received request", slog.String("remote-addr", r.RemoteAddr), slog.Any("headers", headers))
 
+			// Validate connection string
+			connStrValue := headers.ConnectionString.Unwrap()
+			if connStrValue == "" {
+				http.Error(w, "missing connection string", http.StatusBadRequest)
+				return
+			}
+
+			connConfig, err := connstr.Parse(connStrValue)
+			if err != nil {
+				slog.Error("invalid connection string", slog.String("error", err.Error()))
+				http.Error(w, "invalid connection string: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+
+			if err := connConfig.Validate(); err != nil {
+				slog.Error("invalid connection configuration", slog.String("error", err.Error()))
+				http.Error(w, "invalid connection configuration: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+
+			// TODO(PER-3): max payload
+
 			payload, err := readPayload(r)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
@@ -24,7 +47,7 @@ func main() {
 
 			slog.Info("parsed payload", slog.String("query", payload.Query), slog.Int("num-queries", len(payload.Queries)))
 
-			opts := executor.Options{
+			opts := httpexecutor.Options{
 				RawTextOutput:       headers.RawTextOutput,
 				ArrayMode:           headers.ArrayMode,
 				PoolOptIn:           headers.PoolOptIn,
@@ -33,7 +56,7 @@ func main() {
 				BatchDeferrable:     headers.BatchDeferrable,
 			}
 
-			result, err := executor.Execute(r.Context(), *headers.ConnectionString, executor.Payload{
+			result, err := httpexecutor.Execute(r.Context(), *headers.ConnectionString, httpexecutor.Payload{
 				Query:   payload.Query,
 				Params:  payload.Params,
 				Queries: payload.Queries,
