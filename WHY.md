@@ -7,7 +7,7 @@ Two weeks ago, I was at the Neon annual offsite when [PlanetScale announced supp
 So, what exactly is the Neon serverless driver?
 I'll keep this short and link to a few good posts from Neon for deeper reading.
 
-Some popular serverless environments restrict the use of raw TCP sockets, which regular Postgres drivers need to communicate using the Postgres wire protocol. While [Cloudflare Workers now support outbound TCP](https://developers.cloudflare.com/workers/runtime-apis/tcp-sockets/) connections and even provide an [impressive tech](https://developers.cloudflare.com/hyperdrive/) under the hood [1], Vercel Edge Functions [still do not](https://vercel.com/docs/functions/limitations). This limitation makes it impossible for these environments to use traditional Postgres drivers that rely on TCP.
+Some popular serverless environments restrict the use of raw TCP sockets, which regular Postgres drivers need to communicate using the Postgres wire protocol. While [Cloudflare Workers now support outbound TCP](https://developers.cloudflare.com/workers/runtime-apis/tcp-sockets/) connections and even provide an [impressive tech](https://developers.cloudflare.com/hyperdrive/) [1] under the hood, Vercel Edge Functions [still do not](https://vercel.com/docs/functions/limitations). This limitation makes it impossible for these environments to use traditional Postgres drivers that rely on TCP.
 
 The [Neon serverless driver](https://github.com/neondatabase/serverless), and more specifically [its proxy](https://github.com/neondatabase/neon/tree/main/proxy/src), solves this problem. The Neon multi-tenant proxy speaks both the Postgres wire protocol and SQL-over-HTTP or WebSockets. The JavaScript driver can then use HTTP or WebSockets as its transport layer, avoiding direct TCP connections altogether.
 
@@ -36,4 +36,4 @@ The initial goal is to achieve full compatibility with the JavaScript serverless
 
 Notes:
 
-[1] Cloudflare's Hyperdrive acts as a globally distributed connection pooler and cache, improving performance by pooling connections and caching frequent queries instead of opening a TCP connection on every function run.
+[1]: Cloudflare's Hyperdrive acts as a globally distributed connection pooler and cache, improving performance by pooling connections and caching frequent queries instead of opening a TCP connection on every function run.

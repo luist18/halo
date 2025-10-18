@@ -87,15 +87,10 @@ func (b *BatchQueryResult) GetHeaders() map[string]string {
 }
 
 func Execute(ctx context.Context, connStrSecret secret.Secret, payload Payload, opts Options) (Result, error) {
-	connStr := connStrSecret.Unwrap()
-	if connStr == "" {
-		return nil, ErrInvalidConnectionString
-	}
-
 	// TODO: read other configuration parameters
 
 	// TODO: maintain a pool
-	config, err := pgx.ParseConfig(connStr)
+	config, err := pgx.ParseConfig(connStrSecret.Unwrap())
 	if err != nil {
 		return nil, err
 	}

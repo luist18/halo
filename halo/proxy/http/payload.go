@@ -6,9 +6,17 @@ import (
 	"net/http"
 )
 
-// ErrInvalidPayloadQueriesAndQueryBothDefined is returned when both
-// queries and query are defined in the payload, which is invalid.
-var ErrInvalidPayloadQueriesAndQueryBothDefined = errors.New("both queries and query are defined in the payload")
+var (
+	// ErrInvalidPayloadQueriesAndQueryBothDefined is returned when both
+	// queries and query are defined in the payload, which is invalid.
+	ErrInvalidPayloadQueriesAndQueryBothDefined = errors.New("both queries and query are defined in the payload")
+
+	// ErrPayloadTooManyQueries is returned when the payload contains more queries than allowed.
+	ErrPayloadTooManyQueries = errors.New("payload contains too many queries")
+
+	// ErrQueryTooLong is returned when a query exceeds the maximum allowed length.
+	ErrQueryTooLong = errors.New("query exceeds maximum length")
+)
 
 // payload is the request payload for the HTTP proxy.
 type payload struct {
@@ -49,6 +57,20 @@ func readPayload(r *http.Request) (*payload, error) {
 
 	if len(payload.Queries) > 0 && (payload.Query != "" || len(payload.Params) > 0) {
 		return nil, ErrInvalidPayloadQueriesAndQueryBothDefined
+	}
+
+	if len(payload.Queries) > MaxBatchQueries {
+		return nil, ErrPayloadTooManyQueries
+	}
+
+	if payload.Query != "" && len(payload.Query) > MaxQueryLength {
+		return nil, ErrQueryTooLong
+	}
+
+	for _, q := range payload.Queries {
+		if len(q.Query) > MaxQueryLength {
+			return nil, ErrQueryTooLong
+		}
 	}
 
 	return &payload, nil

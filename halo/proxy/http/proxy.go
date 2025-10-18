@@ -18,6 +18,11 @@ const (
 	BatchIsolationLevelHeader = "Neon-Batch-Isolation-Level"
 	BatchReadOnlyHeader       = "Neon-Batch-Read-Only"
 	BatchDeferrableHeader     = "Neon-Batch-Deferrable"
+
+	// Payload size limits
+	MaxPayloadSize  = 10 * 1024 * 1024 // 10MB
+	MaxBatchQueries = 1024
+	MaxQueryLength  = 100 * 1024 // 100KB
 )
 
 // HttpProxy represents an HTTP proxy server for PostgreSQL connections
@@ -48,6 +53,15 @@ func (p *HttpProxy) Start() error {
 func (p *HttpProxy) handleSQL(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
+		if r.ContentLength > MaxPayloadSize {
+			slog.Error("payload too large", slog.Int64("content-length", r.ContentLength), slog.Int("max", MaxPayloadSize))
+			http.Error(w, fmt.Sprintf("payload too large: max size is %d bytes", MaxPayloadSize), http.StatusRequestEntityTooLarge)
+			return
+		}
+
+		// Overrides the request body reader to limit the size of the payload
+		r.Body = http.MaxBytesReader(w, r.Body, MaxPayloadSize)
+
 		headers := parseHeaders(r)
 		slog.Info("received request", slog.String("remote-addr", r.RemoteAddr), slog.Any("headers", headers))
 
@@ -70,8 +84,6 @@ func (p *HttpProxy) handleSQL(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid connection configuration: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-
-		// TODO(PER-3): max payload
 
 		payload, err := readPayload(r)
 		if err != nil {
