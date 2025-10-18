@@ -90,7 +90,6 @@ func (p *HttpProxy) handleSQL(w http.ResponseWriter, r *http.Request) {
 			BatchDeferrable:     headers.BatchDeferrable,
 		}
 
-		// Convert payload to executor payload
 		execPayload := httpexecutor.Payload{
 			Query:   payload.Query,
 			Params:  payload.Params,
@@ -106,29 +105,11 @@ func (p *HttpProxy) handleSQL(w http.ResponseWriter, r *http.Request) {
 
 		w.Header().Set("Content-Type", "application/json")
 
-		// Format response based on whether it's a batch or single query
-		var response interface{}
-		if result.IsBatch {
-			// Add transaction configuration headers for batch mode
-			if opts.BatchReadOnly {
-				w.Header().Set(BatchReadOnlyHeader, "true")
-			}
-			if opts.BatchDeferrable {
-				w.Header().Set(BatchDeferrableHeader, "true")
-			}
-			if opts.BatchIsolationLevel != "" {
-				w.Header().Set(BatchIsolationLevelHeader, opts.BatchIsolationLevel)
-			}
-
-			response = map[string]interface{}{
-				"results": result.Results,
-			}
-		} else {
-			// For single query, return the response directly
-			response = result.Results[0]
+		for key, value := range result.GetHeaders() {
+			w.Header().Set(key, value)
 		}
 
-		if err := json.NewEncoder(w).Encode(response); err != nil {
+		if err := json.NewEncoder(w).Encode(result.ToResponse()); err != nil {
 			slog.Error("failed to encode response", slog.String("error", err.Error()))
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

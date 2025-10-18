@@ -2,15 +2,10 @@ package httpexecutor
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/luist18/halo/internal/secret"
 )
 
@@ -25,13 +20,15 @@ type Options struct {
 	BatchDeferrable     bool
 }
 
+type MultiQueryPayload []struct {
+	Query  string        `json:"query"`
+	Params []interface{} `json:"params"`
+}
+
 type Payload struct {
-	Query   string        `json:"query"`
-	Params  []interface{} `json:"params"`
-	Queries []struct {
-		Query  string        `json:"query"`
-		Params []interface{} `json:"params"`
-	} `json:"queries,omitempty"`
+	Query   string            `json:"query"`
+	Params  []interface{}     `json:"params"`
+	Queries MultiQueryPayload `json:"queries,omitempty"`
 }
 
 type ExecutorResponse struct {
@@ -42,33 +39,71 @@ type ExecutorResponse struct {
 	RowsAsArray bool   `json:"rowsAsArray,omitempty"`
 }
 
-type ExecutorResult struct {
-	Results []ExecutorResponse
-	IsBatch bool
+// Result represents the result of executing a query or batch of queries
+type Result interface {
+	ToResponse() interface{}
+	GetHeaders() map[string]string
 }
 
-func Execute(ctx context.Context, connStrSecret secret.Secret, payload Payload, opts Options) (ExecutorResult, error) {
+// SingleQueryResult represents the result of a single query execution
+type SingleQueryResult struct {
+	Response ExecutorResponse
+}
+
+func (s *SingleQueryResult) ToResponse() interface{} {
+	return s.Response
+}
+
+func (s *SingleQueryResult) GetHeaders() map[string]string {
+	return map[string]string{}
+}
+
+// BatchQueryResult represents the result of a batch query execution
+type BatchQueryResult struct {
+	Responses      []ExecutorResponse
+	IsolationLevel string
+	ReadOnly       bool
+	Deferrable     bool
+}
+
+func (b *BatchQueryResult) ToResponse() interface{} {
+	return map[string]interface{}{
+		"results": b.Responses,
+	}
+}
+
+func (b *BatchQueryResult) GetHeaders() map[string]string {
+	headers := make(map[string]string)
+	if b.ReadOnly {
+		headers["Neon-Batch-Read-Only"] = "true"
+	}
+	if b.Deferrable {
+		headers["Neon-Batch-Deferrable"] = "true"
+	}
+	if b.IsolationLevel != "" {
+		headers["Neon-Batch-Isolation-Level"] = b.IsolationLevel
+	}
+	return headers
+}
+
+func Execute(ctx context.Context, connStrSecret secret.Secret, payload Payload, opts Options) (Result, error) {
 	connStr := connStrSecret.Unwrap()
 	if connStr == "" {
-		return ExecutorResult{}, ErrInvalidConnectionString
+		return nil, ErrInvalidConnectionString
 	}
 
 	// TODO: read other configuration parameters
 
-	// if len(payload.Queries) == 0 {
-	// 	http.Error(w, "No Queries", http.StatusBadRequest)
-	// }
-
 	// TODO: maintain a pool
 	config, err := pgx.ParseConfig(connStr)
 	if err != nil {
-		return ExecutorResult{}, err
+		return nil, err
 	}
 	config.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
 
 	conn, err := pgx.ConnectConfig(ctx, config)
 	if err != nil {
-		return ExecutorResult{}, err
+		return nil, err
 	}
 	defer conn.Close(ctx)
 
@@ -77,26 +112,22 @@ func Execute(ctx context.Context, connStrSecret secret.Secret, payload Payload, 
 	case QueryModeSingle:
 		resp, err := executeSingleQuery(ctx, conn, payload.Query, payload.Params, opts)
 		if err != nil {
-			return ExecutorResult{}, err
+			return nil, err
 		}
-		return ExecutorResult{
-			Results: []ExecutorResponse{resp},
-			IsBatch: false,
-		}, nil
+		return &SingleQueryResult{Response: resp}, nil
 	case QueryModeBatch:
-		results, err := executeBatchQuery(ctx, conn, []struct {
-			Query  string
-			Params []interface{}
-		}(payload.Queries), opts)
+		results, err := executeBatchQuery(ctx, conn, payload.Queries, opts)
 		if err != nil {
-			return ExecutorResult{}, err
+			return nil, err
 		}
-		return ExecutorResult{
-			Results: results,
-			IsBatch: true,
+		return &BatchQueryResult{
+			Responses:      results,
+			IsolationLevel: opts.BatchIsolationLevel,
+			ReadOnly:       opts.BatchReadOnly,
+			Deferrable:     opts.BatchDeferrable,
 		}, nil
 	default:
-		return ExecutorResult{}, ErrInvalidQueryMode
+		return nil, ErrInvalidQueryMode
 	}
 }
 
@@ -142,7 +173,6 @@ func executeSingleQuery(ctx context.Context, conn *pgx.Conn, query string, param
 	}
 	defer rows.Close()
 
-	// Get field descriptions from pgx which has access to the wire protocol
 	fieldDescriptions := rows.FieldDescriptions()
 	fields := fields(fieldDescriptions)
 
@@ -174,11 +204,9 @@ func executeSingleQueryInTx(ctx context.Context, tx pgx.Tx, query string, params
 	}
 	defer rows.Close()
 
-	// Get field descriptions from pgx which has access to the wire protocol
 	fieldDescriptions := rows.FieldDescriptions()
 	fields := fields(fieldDescriptions)
 
-	// Process rows
 	results, err := processRows(rows, fieldDescriptions, opts)
 	if err != nil {
 		return ExecutorResponse{}, err
@@ -197,17 +225,12 @@ func executeSingleQueryInTx(ctx context.Context, tx pgx.Tx, query string, params
 	}, nil
 }
 
-func executeBatchQuery(ctx context.Context, conn *pgx.Conn, queries []struct {
-	Query  string
-	Params []interface{}
-}, opts Options) ([]ExecutorResponse, error) {
-	// Parse isolation level
+func executeBatchQuery(ctx context.Context, conn *pgx.Conn, queries MultiQueryPayload, opts Options) ([]ExecutorResponse, error) {
 	isolationLevel, err := parseIsolationLevel(opts.BatchIsolationLevel)
 	if err != nil {
 		return nil, err
 	}
 
-	// Build transaction options
 	txOpts := pgx.TxOptions{
 		IsoLevel: isolationLevel,
 	}
@@ -224,13 +247,11 @@ func executeBatchQuery(ctx context.Context, conn *pgx.Conn, queries []struct {
 		txOpts.DeferrableMode = pgx.NotDeferrable
 	}
 
-	// Begin transaction
 	tx, err := conn.BeginTx(ctx, txOpts)
 	if err != nil {
 		return nil, err
 	}
 
-	// Ensure rollback if we don't commit
 	defer func() {
 		if tx != nil {
 			tx.Rollback(ctx)
@@ -239,7 +260,6 @@ func executeBatchQuery(ctx context.Context, conn *pgx.Conn, queries []struct {
 
 	results := make([]ExecutorResponse, 0, len(queries))
 
-	// Execute all queries in the transaction
 	for _, q := range queries {
 		resp, err := executeSingleQueryInTx(ctx, tx, q.Query, q.Params, opts)
 		if err != nil {
@@ -248,12 +268,10 @@ func executeBatchQuery(ctx context.Context, conn *pgx.Conn, queries []struct {
 		results = append(results, resp)
 	}
 
-	// Commit transaction
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 
-	// Set tx to nil to prevent rollback in defer
 	tx = nil
 
 	return results, nil
@@ -268,7 +286,6 @@ func processRows(rows pgx.Rows, fieldDescriptions []pgconn.FieldDescription, opt
 			return nil, err
 		}
 
-		// Convert values based on raw output mode
 		row := make([]any, len(vals))
 		for idx, val := range vals {
 			val, err = parseValue(val, opts.RawTextOutput, opts.ArrayMode, fieldDescriptions[idx])
@@ -283,129 +300,4 @@ func processRows(rows pgx.Rows, fieldDescriptions []pgconn.FieldDescription, opt
 	}
 
 	return results, nil
-}
-
-func returnValue(val any, columnName string, arrayMode bool) any {
-	if val != nil {
-		if arrayMode {
-			return val
-		} else {
-			return map[string]any{
-				columnName: val,
-			}
-		}
-	}
-
-	return val
-}
-
-type field struct {
-	Name             string `json:"name"`
-	DataTypeID       uint32 `json:"dataTypeID"`
-	TableID          uint32 `json:"tableID"`
-	ColumnID         int16  `json:"columnID"`
-	DataTypeSize     int16  `json:"dataTypeSize"`
-	DataTypeModifier int32  `json:"dataTypeModifier"`
-	Format           string `json:"format"`
-}
-
-func fields(fds []pgconn.FieldDescription) []field {
-	fields := make([]field, 0, len(fds))
-	for _, fd := range fds {
-		fields = append(fields, field{
-			Name:             fd.Name,
-			DataTypeID:       fd.DataTypeOID,
-			TableID:          fd.TableOID,
-			ColumnID:         int16(fd.TableAttributeNumber),
-			DataTypeSize:     fd.DataTypeSize,
-			DataTypeModifier: fd.TypeModifier,
-			Format:           "text",
-		})
-	}
-
-	return fields
-}
-
-func pgRawValue(val any) (any, error) {
-	// In raw output mode, convert all values to strings
-	switch v := val.(type) {
-	case []byte:
-		val = string(v)
-	case map[string]any, []any:
-		// JSON-encode complex types instead of using fmt.Sprint
-		jsonBytes, err := json.Marshal(v)
-		if err != nil {
-			return ExecutorResponse{}, err
-		}
-		val = string(jsonBytes)
-	case time.Time:
-		// Use ISO 8601 format for consistency
-		val = v.Format(time.RFC3339)
-	default:
-		val = fmt.Sprint(v)
-	}
-
-	return val, nil
-}
-
-func pgValue(val any, fd pgconn.FieldDescription) (any, error) {
-	// In normal mode, perform type-specific conversions
-
-	// Check if it's JSON or JSONB type
-	if fd.DataTypeOID == pgtype.JSONOID || fd.DataTypeOID == pgtype.JSONBOID {
-		// Parse JSON/JSONB as actual JSON objects
-		var jsonVal any
-		valStr := ""
-		switch v := val.(type) {
-		case []byte:
-			valStr = string(v)
-		case map[string]any:
-			marshalled, err := json.Marshal(v)
-			if err != nil {
-				return ExecutorResponse{}, err
-			}
-			valStr = string(marshalled)
-		case string:
-			valStr = v
-		default:
-			valStr = fmt.Sprint(v)
-		}
-		if err := json.Unmarshal([]byte(valStr), &jsonVal); err != nil {
-			return ExecutorResponse{}, err
-		}
-		val = jsonVal
-	} else {
-		// For other types, convert byte slices to strings
-		// to avoid base64 encoding in JSON output
-		switch v := val.(type) {
-		case []byte:
-			val = string(v)
-		case bool:
-			val = val == "t"
-		}
-	}
-
-	return val, nil
-}
-
-func parseValue(val any, rawTextOutput bool, arrayMode bool, fd pgconn.FieldDescription) (any, error) {
-	var err error
-	if rawTextOutput {
-		val, err = pgRawValue(val)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		val, err = pgValue(val, fd)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return returnValue(val, fd.Name, arrayMode), nil
-}
-
-func parseCommand(command string) string {
-	parts := strings.Split(command, " ")
-	return parts[0]
 }

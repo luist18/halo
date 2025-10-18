@@ -129,8 +129,9 @@ func TestBatchTransactionCommit(t *testing.T) {
 
 	// Verify: No error and all rows committed
 	require.NoError(t, err)
-	require.True(t, result.IsBatch)
-	require.Len(t, result.Results, 3)
+	batchResult, ok := result.(*BatchQueryResult)
+	require.True(t, ok, "Result should be a BatchQueryResult")
+	require.Len(t, batchResult.Responses, 3)
 
 	count, err := countRows(ctx, connStr, tableName)
 	require.NoError(t, err)
@@ -160,13 +161,11 @@ func TestBatchTransactionRollback(t *testing.T) {
 	// Verify: Error occurred and NO rows were committed (rollback)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "duplicate")
+	require.Nil(t, result, "Result should be nil when there's an error")
 
 	count, err := countRows(ctx, connStr, tableName)
 	require.NoError(t, err)
 	require.Equal(t, 0, count, "First insert should be rolled back")
-
-	// Ensure we got an empty result
-	require.False(t, result.IsBatch)
 }
 
 // TestIsolationLevelReadCommitted verifies ReadCommitted isolation level
@@ -188,7 +187,8 @@ func TestIsolationLevelReadCommitted(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	require.True(t, result.IsBatch)
+	_, ok := result.(*BatchQueryResult)
+	require.True(t, ok, "Result should be a BatchQueryResult")
 
 	count, err := countRows(ctx, connStr, tableName)
 	require.NoError(t, err)
@@ -213,7 +213,8 @@ func TestIsolationLevelSerializable(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	require.True(t, result.IsBatch)
+	_, ok := result.(*BatchQueryResult)
+	require.True(t, ok, "Result should be a BatchQueryResult")
 
 	count, err := countRows(ctx, connStr, tableName)
 	require.NoError(t, err)
@@ -238,7 +239,8 @@ func TestIsolationLevelRepeatableRead(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	require.True(t, result.IsBatch)
+	_, ok := result.(*BatchQueryResult)
+	require.True(t, ok, "Result should be a BatchQueryResult")
 }
 
 // TestInvalidIsolationLevel verifies that invalid isolation level returns error
@@ -316,8 +318,9 @@ func TestReadOnlyModeAllowsReads(t *testing.T) {
 
 	// Verify: No error and data returned
 	require.NoError(t, err)
-	require.True(t, result.IsBatch)
-	require.Len(t, result.Results, 1)
+	batchResult, ok := result.(*BatchQueryResult)
+	require.True(t, ok, "Result should be a BatchQueryResult")
+	require.Len(t, batchResult.Responses, 1)
 }
 
 // TestSleepInTransaction verifies transaction stays open during pg_sleep
@@ -342,11 +345,12 @@ func TestSleepInTransaction(t *testing.T) {
 
 	// Verify: All queries succeeded
 	require.NoError(t, err)
-	require.True(t, result.IsBatch)
-	require.Len(t, result.Results, 3)
+	batchResult, ok := result.(*BatchQueryResult)
+	require.True(t, ok, "Result should be a BatchQueryResult")
+	require.Len(t, batchResult.Responses, 3)
 
 	// Verify: SELECT after sleep saw the INSERT
-	require.Equal(t, 1, result.Results[2].RowCount)
+	require.Equal(t, 1, batchResult.Responses[2].RowCount)
 }
 
 // TestConcurrentBatches verifies multiple concurrent batch transactions work correctly
@@ -468,8 +472,9 @@ func TestLongTransaction(t *testing.T) {
 
 	// Verify: All queries succeeded
 	require.NoError(t, err)
-	require.True(t, result.IsBatch)
-	require.Len(t, result.Results, 20)
+	batchResult, ok := result.(*BatchQueryResult)
+	require.True(t, ok, "Result should be a BatchQueryResult")
+	require.Len(t, batchResult.Responses, 20)
 
 	count, err := countRows(ctx, connStr, tableName)
 	require.NoError(t, err)
@@ -499,8 +504,9 @@ func TestSingleQueryDoesNotUseTransaction(t *testing.T) {
 
 	// Verify: Executed successfully as single query
 	require.NoError(t, err)
-	require.False(t, result.IsBatch, "Single query should not be a batch")
-	require.Len(t, result.Results, 1)
+	singleResult, ok := result.(*SingleQueryResult)
+	require.True(t, ok, "Result should be a SingleQueryResult")
+	require.NotNil(t, singleResult.Response)
 
 	count, err := countRows(ctx, connStr, tableName)
 	require.NoError(t, err)
