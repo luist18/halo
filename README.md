@@ -1,11 +1,13 @@
-
 # halo
 
+
+`halo` (or `halo-proxy`) is a lightweight proxy for PostgreSQL, designed to work seamlessly with the [Neon serverless driver](https://github.com/neondatabase/serverless). 
+
 <p align="center">
-  <img src="https://i.imgur.com/Gt0b3rj.png" alt="halo logo" height="128" />
+  <img src="https://page.luistavares.pt/files/elephant.gif" alt="halo logo" height="128" />
 </p>
 
-`halo` (or `pghalo`) is a lightweight proxy for PostgreSQL, designed to work seamlessly with the [Neon serverless driver](https://github.com/neondatabase/serverless). It enables your Postgres instance to be accessed efficiently from serverless environments like Cloudflare Workers or Vercel Edge Functions, providing low latency and high performance connections.
+Read about why, how and why now in the [WHY.md](WHY.md) document.
 
 ## License
 
