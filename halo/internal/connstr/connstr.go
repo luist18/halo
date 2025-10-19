@@ -115,7 +115,7 @@ func parseKeywordValue(connStr string) (*ConnectionConfig, error) {
 	for _, pair := range pairs {
 		parts := strings.SplitN(pair, "=", 2)
 		if len(parts) != 2 {
-			return nil, fmt.Errorf("invalid key-value pair: %s", pair)
+			return nil, fmt.Errorf("invalid key-value pair format in connection string")
 		}
 
 		key := strings.TrimSpace(parts[0])

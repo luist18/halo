@@ -2,12 +2,15 @@ package http
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/luist18/halo/httpexecutor"
 	"github.com/luist18/halo/internal/connstr"
+	internalerrors "github.com/luist18/halo/proxy/http/internal/errors"
 )
 
 const (
@@ -41,7 +44,7 @@ func NewHttpProxy(port int, endpoint string) *HttpProxy {
 
 // Start starts the HTTP proxy server and blocks until the server stops
 func (p *HttpProxy) Start() error {
-	http.HandleFunc(p.Endpoint, p.handleSQL)
+	http.HandleFunc(p.Endpoint, errorHandler(p.handleSQL))
 
 	addr := fmt.Sprintf(":%d", p.Port)
 	slog.Info("starting HTTP proxy", slog.Int("port", p.Port), slog.String("endpoint", p.Endpoint))
@@ -50,48 +53,41 @@ func (p *HttpProxy) Start() error {
 }
 
 // handleSQL handles SQL execution requests
-func (p *HttpProxy) handleSQL(w http.ResponseWriter, r *http.Request) {
+func (p *HttpProxy) handleSQL(w http.ResponseWriter, r *http.Request) error {
 	switch r.Method {
 	case http.MethodPost:
+		slog.Info("received request", slog.String("remote-addr", r.RemoteAddr), slog.Int64("content-length", r.ContentLength))
 		if r.ContentLength > MaxPayloadSize {
-			slog.Error("payload too large", slog.Int64("content-length", r.ContentLength), slog.Int("max", MaxPayloadSize))
-			http.Error(w, fmt.Sprintf("payload too large: max size is %d bytes", MaxPayloadSize), http.StatusRequestEntityTooLarge)
-			return
+			return internalerrors.NewRequestEntityTooLargeErr(
+				fmt.Sprintf("payload too large: max size is %d bytes", MaxPayloadSize),
+				slog.Int64("content-length", r.ContentLength),
+				slog.Int("max", MaxPayloadSize))
 		}
 
 		// Overrides the request body reader to limit the size of the payload
 		r.Body = http.MaxBytesReader(w, r.Body, MaxPayloadSize)
 
 		headers := parseHeaders(r)
-		slog.Info("received request", slog.String("remote-addr", r.RemoteAddr), slog.Any("headers", headers))
 
 		// Validate connection string
 		connStrValue := headers.ConnectionString.Unwrap()
 		if connStrValue == "" {
-			http.Error(w, "missing connection string", http.StatusBadRequest)
-			return
+			return internalerrors.NewInvalidInputErr("missing connection string")
 		}
 
 		connConfig, err := connstr.Parse(connStrValue)
 		if err != nil {
-			slog.Error("invalid connection string", slog.String("error", err.Error()))
-			http.Error(w, "invalid connection string: "+err.Error(), http.StatusBadRequest)
-			return
+			return internalerrors.WrapWithInvalidInputErr(err, "invalid connection string")
 		}
 
 		if err := connConfig.Validate(); err != nil {
-			slog.Error("invalid connection configuration", slog.String("error", err.Error()))
-			http.Error(w, "invalid connection configuration: "+err.Error(), http.StatusBadRequest)
-			return
+			return internalerrors.WrapWithInvalidInputErr(err, "invalid connection configuration")
 		}
 
 		payload, err := readPayload(r)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return internalerrors.WrapWithInvalidInputErr(err, "invalid payload")
 		}
-
-		slog.Info("parsed payload", slog.String("query", payload.Query), slog.Int("num-queries", len(payload.Queries)))
 
 		opts := httpexecutor.Options{
 			RawTextOutput:       headers.RawTextOutput,
@@ -110,27 +106,91 @@ func (p *HttpProxy) handleSQL(w http.ResponseWriter, r *http.Request) {
 
 		result, err := httpexecutor.Execute(r.Context(), *headers.ConnectionString, execPayload, opts)
 		if err != nil {
-			slog.Error("failed to execute query", slog.String("error", err.Error()))
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			return err
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-
 		for key, value := range result.GetHeaders() {
 			w.Header().Set(key, value)
 		}
 
 		if err := json.NewEncoder(w).Encode(result.ToResponse()); err != nil {
 			slog.Error("failed to encode response", slog.String("error", err.Error()))
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			return internalerrors.WrapWithInternalErr(err, "failed to encode response")
 		}
 
-		return
+		return nil
 	default:
 		// Only allow POST requests
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return
+		return internalerrors.NewMethodNotAllowedErr("method not allowed")
 	}
+}
+
+func errorHandler(f func(http.ResponseWriter, *http.Request) error) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := f(w, r); err != nil {
+			type errorResponse struct {
+				Message string `json:"message"`
+				Error   string `json:"error"`
+			}
+
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) {
+				var httpPgErr internalerrors.PGError
+				httpPgErr.FromPgError(pgErr)
+
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				if encodeErr := json.NewEncoder(w).Encode(httpPgErr); encodeErr != nil {
+					slog.Error("failed to encode pg error response", slog.String("error", encodeErr.Error()))
+				}
+				return
+			}
+
+			var proxyErr internalerrors.ProxyError
+			if errors.As(err, &proxyErr) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(proxyErr.StatusCode())
+				json.NewEncoder(w).Encode(errorResponse{
+					Message: proxyErr.Error(),
+					Error:   buildErrorChain(err),
+				})
+				return
+			}
+
+			slog.Error("unhandled error", slog.String("error", err.Error()))
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(errorResponse{
+				Message: "Internal server error",
+				Error:   buildErrorChain(err),
+			})
+		}
+	}
+}
+
+// buildErrorChain constructs the full error message by traversing the error chain
+func buildErrorChain(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	var messages []string
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		messages = append(messages, e.Error())
+	}
+
+	if len(messages) == 0 {
+		return ""
+	}
+	if len(messages) == 1 {
+		return messages[0]
+	}
+
+	// Build the chain: "message1: message2: message3"
+	result := messages[0]
+	for i := 1; i < len(messages); i++ {
+		result += ": " + messages[i]
+	}
+	return result
 }
