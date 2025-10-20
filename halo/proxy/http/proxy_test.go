@@ -9,6 +9,11 @@ import (
 	"testing"
 )
 
+// testHandler wraps a handler with the full middleware chain for testing
+func testHandler(h func(http.ResponseWriter, *http.Request) error) http.HandlerFunc {
+	return withRequestLifecycle(h)
+}
+
 func TestHandleSQL_PayloadSizeLimit_ContentLength(t *testing.T) {
 	proxy := NewHttpProxy(8080, "/sql")
 
@@ -52,7 +57,7 @@ func TestHandleSQL_PayloadSizeLimit_ContentLength(t *testing.T) {
 			req.ContentLength = tt.contentLength
 
 			rr := httptest.NewRecorder()
-			errorHandler(proxy.handleSQL).ServeHTTP(rr, req)
+			testHandler(proxy.handleSQL).ServeHTTP(rr, req)
 
 			if rr.Code != tt.wantStatusCode {
 				t.Errorf("handleSQL() status = %v, want %v", rr.Code, tt.wantStatusCode)
@@ -76,7 +81,7 @@ func TestHandleSQL_MaxBytesReader(t *testing.T) {
 	req.ContentLength = int64(len(largePayload))
 
 	rr := httptest.NewRecorder()
-	errorHandler(proxy.handleSQL).ServeHTTP(rr, req)
+	testHandler(proxy.handleSQL).ServeHTTP(rr, req)
 
 	// Should be rejected due to Content-Length check
 	if rr.Code != http.StatusRequestEntityTooLarge {
@@ -97,7 +102,7 @@ func TestHandleSQL_MaxBytesReader_NoContentLength(t *testing.T) {
 	req.ContentLength = -1
 
 	rr := httptest.NewRecorder()
-	errorHandler(proxy.handleSQL).ServeHTTP(rr, req)
+	testHandler(proxy.handleSQL).ServeHTTP(rr, req)
 
 	// The MaxBytesReader should still enforce the limit
 	// We expect an error when trying to read the body
@@ -116,7 +121,7 @@ func TestHandleSQL_MethodNotAllowed(t *testing.T) {
 			req := httptest.NewRequest(method, "/sql", nil)
 			rr := httptest.NewRecorder()
 
-			errorHandler(proxy.handleSQL).ServeHTTP(rr, req)
+			testHandler(proxy.handleSQL).ServeHTTP(rr, req)
 
 			if rr.Code != http.StatusMethodNotAllowed {
 				t.Errorf("handleSQL() status = %v, want %v", rr.Code, http.StatusMethodNotAllowed)
@@ -133,7 +138,7 @@ func TestHandleSQL_MissingConnectionString(t *testing.T) {
 	// No connection string header set
 
 	rr := httptest.NewRecorder()
-	errorHandler(proxy.handleSQL).ServeHTTP(rr, req)
+	testHandler(proxy.handleSQL).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("handleSQL() status = %v, want %v", rr.Code, http.StatusBadRequest)
@@ -152,7 +157,7 @@ func TestHandleSQL_InvalidPayloadJSON(t *testing.T) {
 	req.ContentLength = int64(len(`{"query": "SELECT 1"`))
 
 	rr := httptest.NewRecorder()
-	errorHandler(proxy.handleSQL).ServeHTTP(rr, req)
+	testHandler(proxy.handleSQL).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("handleSQL() status = %v, want %v", rr.Code, http.StatusBadRequest)
@@ -174,7 +179,7 @@ func TestHandleSQL_TooManyQueries(t *testing.T) {
 	req.ContentLength = int64(len(payload))
 
 	rr := httptest.NewRecorder()
-	errorHandler(proxy.handleSQL).ServeHTTP(rr, req)
+	testHandler(proxy.handleSQL).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("handleSQL() status = %v, want %v", rr.Code, http.StatusBadRequest)
@@ -197,7 +202,7 @@ func TestHandleSQL_QueryTooLong(t *testing.T) {
 	req.ContentLength = int64(len(payload))
 
 	rr := httptest.NewRecorder()
-	errorHandler(proxy.handleSQL).ServeHTTP(rr, req)
+	testHandler(proxy.handleSQL).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("handleSQL() status = %v, want %v", rr.Code, http.StatusBadRequest)
@@ -219,7 +224,7 @@ func TestHandleSQL_ValidPayloadWithinLimits(t *testing.T) {
 	req.ContentLength = int64(len(payload))
 
 	rr := httptest.NewRecorder()
-	errorHandler(proxy.handleSQL).ServeHTTP(rr, req)
+	testHandler(proxy.handleSQL).ServeHTTP(rr, req)
 
 	// It will fail at execution stage (no real DB), but should pass all size validations
 	// We expect either StatusInternalServerError (DB connection fails) or StatusBadRequest (invalid connection string)
@@ -247,7 +252,7 @@ func TestHandleSQL_BatchQueriesAtLimit(t *testing.T) {
 	req.ContentLength = int64(len(payload))
 
 	rr := httptest.NewRecorder()
-	errorHandler(proxy.handleSQL).ServeHTTP(rr, req)
+	testHandler(proxy.handleSQL).ServeHTTP(rr, req)
 
 	// Should not fail on size validation
 	if strings.Contains(rr.Body.String(), "too many queries") {
@@ -267,7 +272,7 @@ func TestHandleSQL_QueryAtMaxLength(t *testing.T) {
 	req.ContentLength = int64(len(payload))
 
 	rr := httptest.NewRecorder()
-	errorHandler(proxy.handleSQL).ServeHTTP(rr, req)
+	testHandler(proxy.handleSQL).ServeHTTP(rr, req)
 
 	// Should not fail on size validation
 	if strings.Contains(rr.Body.String(), "exceeds maximum length") {
