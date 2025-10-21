@@ -10,7 +10,10 @@ import (
 	"github.com/luist18/halo/internal/secret"
 )
 
-var ErrInvalidQueryMode = errors.New("invalid query mode")
+var (
+	ErrInvalidQueryMode        = errors.New("invalid query mode")
+	ErrPoolOptInNotImplemented = errors.New("connection pooling is not yet implemented")
+)
 
 type Options struct {
 	RawTextOutput       bool
@@ -88,9 +91,12 @@ func (b *BatchQueryResult) GetHeaders() map[string]string {
 }
 
 func Execute(ctx context.Context, connStrSecret secret.Secret, payload Payload, opts Options) (Result, error) {
-	// TODO: read other configuration parameters
+	// TODO(PER-14): implement connection pooling to reuse database connections
+	// Pool opt-in is currently not supported
+	if opts.PoolOptIn {
+		return nil, ErrPoolOptInNotImplemented
+	}
 
-	// TODO: maintain a pool
 	config, err := pgx.ParseConfig(connStrSecret.Unwrap())
 	if err != nil {
 		return nil, err
