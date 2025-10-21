@@ -5,3 +5,4 @@ bin/
 !.env.example
 queries.http
 .DS_Store
+.vscode/

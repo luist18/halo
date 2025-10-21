@@ -62,7 +62,7 @@ func setupTestTable(ctx context.Context, connStr string, createSQL string) (tabl
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to connect: %w", err)
 	}
-	defer conn.Close(ctx)
+	defer func() { _ = conn.Close(ctx) }()
 
 	_, err = conn.Exec(ctx, createSQL)
 	if err != nil {
@@ -74,7 +74,7 @@ func setupTestTable(ctx context.Context, connStr string, createSQL string) (tabl
 		if err != nil {
 			return
 		}
-		defer conn.Close(ctx)
+		defer func() { _ = conn.Close(ctx) }()
 		_, _ = conn.Exec(ctx, fmt.Sprintf("DROP TABLE IF EXISTS %s", tableName))
 	}
 
@@ -87,7 +87,7 @@ func countRows(ctx context.Context, connStr string, tableName string) (int, erro
 	if err != nil {
 		return 0, err
 	}
-	defer conn.Close(ctx)
+	defer func() { _ = conn.Close(ctx) }()
 
 	var count int
 	err = conn.QueryRow(ctx, fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)).Scan(&count)
@@ -100,7 +100,7 @@ func executeDirectQuery(ctx context.Context, connStr string, query string, args 
 	if err != nil {
 		return err
 	}
-	defer conn.Close(ctx)
+	defer func() { _ = conn.Close(ctx) }()
 
 	_, err = conn.Exec(ctx, query, args...)
 	return err

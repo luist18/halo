@@ -3,6 +3,7 @@ package httpexecutor
 import (
 	"context"
 	"errors"
+	"log/slog"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -100,7 +101,12 @@ func Execute(ctx context.Context, connStrSecret secret.Secret, payload Payload, 
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close(ctx)
+	defer func() {
+		err := conn.Close(ctx)
+		if err != nil {
+			slog.Error("failed to close connection", slog.String("error", err.Error()))
+		}
+	}()
 
 	queryMode := getQueryMode(payload)
 	switch queryMode {
@@ -249,7 +255,10 @@ func executeBatchQuery(ctx context.Context, conn *pgx.Conn, queries MultiQueryPa
 
 	defer func() {
 		if tx != nil {
-			tx.Rollback(ctx)
+			err := tx.Rollback(ctx)
+			if err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+				slog.Error("failed to rollback transaction", slog.String("error", err.Error()))
+			}
 		}
 	}()
 
