@@ -12,163 +12,6 @@ import (
 	"github.com/luist18/halo/internal/secret"
 )
 
-func TestReturnValue(t *testing.T) {
-	tests := []struct {
-		name       string
-		val        any
-		columnName string
-		arrayMode  bool
-		want       any
-	}{
-		{
-			name:       "nil value with arrayMode true",
-			val:        nil,
-			columnName: "id",
-			arrayMode:  true,
-			want:       nil,
-		},
-		{
-			name:       "nil value with arrayMode false",
-			val:        nil,
-			columnName: "name",
-			arrayMode:  false,
-			want:       nil,
-		},
-		{
-			name:       "string value with arrayMode true",
-			val:        "test string",
-			columnName: "title",
-			arrayMode:  true,
-			want:       "test string",
-		},
-		{
-			name:       "string value with arrayMode false",
-			val:        "test string",
-			columnName: "title",
-			arrayMode:  false,
-			want: map[string]any{
-				"title": "test string",
-			},
-		},
-		{
-			name:       "int value with arrayMode true",
-			val:        42,
-			columnName: "count",
-			arrayMode:  true,
-			want:       42,
-		},
-		{
-			name:       "int value with arrayMode false",
-			val:        42,
-			columnName: "count",
-			arrayMode:  false,
-			want: map[string]any{
-				"count": 42,
-			},
-		},
-		{
-			name:       "float value with arrayMode true",
-			val:        3.14,
-			columnName: "price",
-			arrayMode:  true,
-			want:       3.14,
-		},
-		{
-			name:       "float value with arrayMode false",
-			val:        3.14,
-			columnName: "price",
-			arrayMode:  false,
-			want: map[string]any{
-				"price": 3.14,
-			},
-		},
-		{
-			name:       "bool value with arrayMode true",
-			val:        true,
-			columnName: "active",
-			arrayMode:  true,
-			want:       true,
-		},
-		{
-			name:       "bool value with arrayMode false",
-			val:        false,
-			columnName: "active",
-			arrayMode:  false,
-			want: map[string]any{
-				"active": false,
-			},
-		},
-		{
-			name:       "map value with arrayMode true",
-			val:        map[string]any{"key": "value"},
-			columnName: "data",
-			arrayMode:  true,
-			want:       map[string]any{"key": "value"},
-		},
-		{
-			name:       "map value with arrayMode false",
-			val:        map[string]any{"key": "value"},
-			columnName: "data",
-			arrayMode:  false,
-			want: map[string]any{
-				"data": map[string]any{"key": "value"},
-			},
-		},
-		{
-			name:       "slice value with arrayMode true",
-			val:        []int{1, 2, 3},
-			columnName: "numbers",
-			arrayMode:  true,
-			want:       []int{1, 2, 3},
-		},
-		{
-			name:       "slice value with arrayMode false",
-			val:        []int{1, 2, 3},
-			columnName: "numbers",
-			arrayMode:  false,
-			want: map[string]any{
-				"numbers": []int{1, 2, 3},
-			},
-		},
-		{
-			name:       "empty string with arrayMode false",
-			val:        "",
-			columnName: "description",
-			arrayMode:  false,
-			want: map[string]any{
-				"description": "",
-			},
-		},
-		{
-			name:       "zero value int with arrayMode false",
-			val:        0,
-			columnName: "count",
-			arrayMode:  false,
-			want: map[string]any{
-				"count": 0,
-			},
-		},
-		{
-			name:       "column name with special characters",
-			val:        "test",
-			columnName: "user_name",
-			arrayMode:  false,
-			want: map[string]any{
-				"user_name": "test",
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := returnValue(tt.val, tt.columnName, tt.arrayMode)
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("returnValue() = %v (type: %T), want %v (type: %T)", got, got, tt.want, tt.want)
-			}
-		})
-	}
-}
-
 func TestPgRawValue(t *testing.T) {
 	testTime := time.Date(2023, 10, 15, 12, 30, 45, 0, time.UTC)
 
@@ -445,16 +288,14 @@ func TestParseValue(t *testing.T) {
 		name          string
 		val           any
 		rawTextOutput bool
-		arrayMode     bool
 		fd            pgconn.FieldDescription
 		want          any
 		wantErr       bool
 	}{
 		{
-			name:          "raw mode - string in array mode",
+			name:          "raw mode - string",
 			val:           "test",
 			rawTextOutput: true,
-			arrayMode:     true,
 			fd: pgconn.FieldDescription{
 				Name:        "name",
 				DataTypeOID: pgtype.TextOID,
@@ -462,21 +303,9 @@ func TestParseValue(t *testing.T) {
 			want: "test",
 		},
 		{
-			name:          "raw mode - string in object mode",
-			val:           "test",
-			rawTextOutput: true,
-			arrayMode:     false,
-			fd: pgconn.FieldDescription{
-				Name:        "name",
-				DataTypeOID: pgtype.TextOID,
-			},
-			want: map[string]any{"name": "test"},
-		},
-		{
-			name:          "raw mode - time in array mode",
+			name:          "raw mode - time",
 			val:           testTime,
 			rawTextOutput: true,
-			arrayMode:     true,
 			fd: pgconn.FieldDescription{
 				Name:        "created_at",
 				DataTypeOID: pgtype.TimestampOID,
@@ -484,21 +313,19 @@ func TestParseValue(t *testing.T) {
 			want: "2023-10-15T12:30:45Z",
 		},
 		{
-			name:          "raw mode - map to JSON string in object mode",
+			name:          "raw mode - map to JSON string",
 			val:           map[string]any{"key": "value"},
 			rawTextOutput: true,
-			arrayMode:     false,
 			fd: pgconn.FieldDescription{
 				Name:        "data",
 				DataTypeOID: pgtype.JSONBOID,
 			},
-			want: map[string]any{"data": `{"key":"value"}`},
+			want: `{"key":"value"}`,
 		},
 		{
-			name:          "normal mode - JSON in array mode",
+			name:          "normal mode - JSON",
 			val:           []byte(`{"key":"value"}`),
 			rawTextOutput: false,
-			arrayMode:     true,
 			fd: pgconn.FieldDescription{
 				Name:        "data",
 				DataTypeOID: pgtype.JSONOID,
@@ -506,21 +333,9 @@ func TestParseValue(t *testing.T) {
 			want: map[string]any{"key": "value"},
 		},
 		{
-			name:          "normal mode - JSON in object mode",
-			val:           []byte(`{"key":"value"}`),
-			rawTextOutput: false,
-			arrayMode:     false,
-			fd: pgconn.FieldDescription{
-				Name:        "data",
-				DataTypeOID: pgtype.JSONOID,
-			},
-			want: map[string]any{"data": map[string]any{"key": "value"}},
-		},
-		{
-			name:          "normal mode - byte slice in array mode",
+			name:          "normal mode - byte slice",
 			val:           []byte("text"),
 			rawTextOutput: false,
-			arrayMode:     true,
 			fd: pgconn.FieldDescription{
 				Name:        "name",
 				DataTypeOID: pgtype.TextOID,
@@ -528,21 +343,19 @@ func TestParseValue(t *testing.T) {
 			want: "text",
 		},
 		{
-			name:          "normal mode - int in object mode",
+			name:          "normal mode - int",
 			val:           42,
 			rawTextOutput: false,
-			arrayMode:     false,
 			fd: pgconn.FieldDescription{
 				Name:        "count",
 				DataTypeOID: pgtype.Int4OID,
 			},
-			want: map[string]any{"count": 42},
+			want: 42,
 		},
 		{
-			name:          "raw mode - int to string in array mode",
+			name:          "raw mode - int to string",
 			val:           123,
 			rawTextOutput: true,
-			arrayMode:     true,
 			fd: pgconn.FieldDescription{
 				Name:        "id",
 				DataTypeOID: pgtype.Int4OID,
@@ -550,10 +363,9 @@ func TestParseValue(t *testing.T) {
 			want: "123",
 		},
 		{
-			name:          "raw mode - slice to JSON in array mode",
+			name:          "raw mode - slice to JSON",
 			val:           []any{1, 2, 3},
 			rawTextOutput: true,
-			arrayMode:     true,
 			fd: pgconn.FieldDescription{
 				Name:        "numbers",
 				DataTypeOID: pgtype.Int4OID,
@@ -564,7 +376,6 @@ func TestParseValue(t *testing.T) {
 			name:          "raw mode - error from pgRawValue with unmarshalable map",
 			val:           map[string]any{"channel": make(chan int)},
 			rawTextOutput: true,
-			arrayMode:     true,
 			fd: pgconn.FieldDescription{
 				Name:        "bad_data",
 				DataTypeOID: pgtype.TextOID,
@@ -575,7 +386,6 @@ func TestParseValue(t *testing.T) {
 			name:          "raw mode - error from pgRawValue with unmarshalable slice",
 			val:           []any{make(chan int)},
 			rawTextOutput: true,
-			arrayMode:     false,
 			fd: pgconn.FieldDescription{
 				Name:        "bad_array",
 				DataTypeOID: pgtype.TextOID,
@@ -586,7 +396,6 @@ func TestParseValue(t *testing.T) {
 			name:          "normal mode - error from pgValue with invalid JSON",
 			val:           []byte(`{bad json`),
 			rawTextOutput: false,
-			arrayMode:     true,
 			fd: pgconn.FieldDescription{
 				Name:        "invalid",
 				DataTypeOID: pgtype.JSONOID,
@@ -597,7 +406,6 @@ func TestParseValue(t *testing.T) {
 			name:          "normal mode - error from pgValue with unmarshalable map",
 			val:           map[string]any{"channel": make(chan int)},
 			rawTextOutput: false,
-			arrayMode:     false,
 			fd: pgconn.FieldDescription{
 				Name:        "bad_json",
 				DataTypeOID: pgtype.JSONBOID,
@@ -608,7 +416,7 @@ func TestParseValue(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseValue(tt.val, tt.rawTextOutput, tt.arrayMode, tt.fd)
+			got, err := parseValue(tt.val, tt.rawTextOutput, tt.fd)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("parseValue() error = %v, wantErr %v", err, tt.wantErr)
 				return

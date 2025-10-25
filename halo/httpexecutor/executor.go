@@ -36,11 +36,11 @@ type Payload struct {
 }
 
 type ExecutorResponse struct {
-	Fields      any    `json:"fields"`
-	Rows        []any  `json:"rows"`
-	Command     string `json:"command,omitempty"`
-	RowCount    int    `json:"rowCount,omitempty"`
-	RowsAsArray bool   `json:"rowsAsArray,omitempty"`
+	Fields     any    `json:"fields"`
+	Rows       []any  `json:"rows"`
+	Command    string `json:"command"`
+	RowCount   int    `json:"rowCount"`
+	RowAsArray bool   `json:"rowAsArray"`
 }
 
 // Result represents the result of executing a query or batch of queries
@@ -196,11 +196,11 @@ func executeSingleQuery(ctx context.Context, conn *pgx.Conn, query string, param
 	}
 
 	return ExecutorResponse{
-		Fields:      fields,
-		Rows:        results,
-		Command:     parseCommand(rows.CommandTag().String()),
-		RowCount:    len(results),
-		RowsAsArray: opts.ArrayMode,
+		Fields:     fields,
+		Rows:       results,
+		Command:    parseCommand(rows.CommandTag().String()),
+		RowCount:   len(results),
+		RowAsArray: opts.ArrayMode,
 	}, nil
 }
 
@@ -224,11 +224,11 @@ func executeSingleQueryInTx(ctx context.Context, tx pgx.Tx, query string, params
 	}
 
 	return ExecutorResponse{
-		Fields:      fields,
-		Rows:        results,
-		Command:     parseCommand(rows.CommandTag().String()),
-		RowCount:    len(results),
-		RowsAsArray: opts.ArrayMode,
+		Fields:     fields,
+		Rows:       results,
+		Command:    parseCommand(rows.CommandTag().String()),
+		RowCount:   len(results),
+		RowAsArray: opts.ArrayMode,
 	}, nil
 }
 
@@ -296,14 +296,33 @@ func processRows(rows pgx.Rows, fieldDescriptions []pgconn.FieldDescription, opt
 			return nil, err
 		}
 
-		row := make([]any, len(vals))
-		for idx, val := range vals {
-			val, err = parseValue(val, opts.RawTextOutput, opts.ArrayMode, fieldDescriptions[idx])
-			if err != nil {
-				return nil, err
+		var row any
+		if opts.ArrayMode {
+			array := make([]any, len(vals))
+			for idx, val := range vals {
+				val, err = parseValue(val, opts.RawTextOutput, fieldDescriptions[idx])
+				if err != nil {
+					return nil, err
+				}
+
+				array[idx] = val
+
 			}
 
-			row[idx] = val
+			row = array
+		} else {
+			mappedRow := NewOrderedMap()
+
+			for idx, val := range vals {
+				val, err = parseValue(val, opts.RawTextOutput, fieldDescriptions[idx])
+				if err != nil {
+					return nil, err
+				}
+
+				mappedRow.Set(fieldDescriptions[idx].Name, val)
+			}
+
+			row = mappedRow
 		}
 
 		results = append(results, row)

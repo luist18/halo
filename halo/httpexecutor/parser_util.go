@@ -37,20 +37,6 @@ func fields(fds []pgconn.FieldDescription) []field {
 	return fields
 }
 
-func returnValue(val any, columnName string, arrayMode bool) any {
-	if val != nil {
-		if arrayMode {
-			return val
-		} else {
-			return map[string]any{
-				columnName: val,
-			}
-		}
-	}
-
-	return val
-}
-
 func pgRawValue(val any) (any, error) {
 	// In raw output mode, convert all values to strings
 	switch v := val.(type) {
@@ -113,21 +99,23 @@ func pgValue(val any, fd pgconn.FieldDescription) (any, error) {
 	return val, nil
 }
 
-func parseValue(val any, rawTextOutput bool, arrayMode bool, fd pgconn.FieldDescription) (any, error) {
+func parseValue(val any, rawTextOutput bool, fd pgconn.FieldDescription) (any, error) {
 	var err error
 	if rawTextOutput {
 		val, err = pgRawValue(val)
 		if err != nil {
 			return nil, err
 		}
-	} else {
-		val, err = pgValue(val, fd)
-		if err != nil {
-			return nil, err
-		}
+
+		return val, nil
 	}
 
-	return returnValue(val, fd.Name, arrayMode), nil
+	val, err = pgValue(val, fd)
+	if err != nil {
+		return nil, err
+	}
+
+	return val, nil
 }
 
 func parseCommand(command string) string {
