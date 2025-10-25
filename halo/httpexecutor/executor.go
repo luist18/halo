@@ -290,6 +290,7 @@ func executeBatchQuery(ctx context.Context, conn *pgx.Conn, queries MultiQueryPa
 func processRows(rows pgx.Rows, fieldDescriptions []pgconn.FieldDescription, opts Options) ([]any, error) {
 	results := make([]any, 0)
 
+	// TODO: refacor this ugly and repeated logic, just leaving it this way as we fix some parsing issues
 	for rows.Next() {
 		if opts.RawTextOutput {
 			vals := rows.RawValues()
@@ -298,6 +299,10 @@ func processRows(rows pgx.Rows, fieldDescriptions []pgconn.FieldDescription, opt
 			if opts.ArrayMode {
 				array := make([]any, len(vals))
 				for idx, val := range vals {
+					if val == nil {
+						array[idx] = nil
+						continue
+					}
 					array[idx] = string(val)
 				}
 
@@ -306,6 +311,10 @@ func processRows(rows pgx.Rows, fieldDescriptions []pgconn.FieldDescription, opt
 				mappedRow := NewOrderedMap()
 
 				for idx, val := range vals {
+					if val == nil {
+						mappedRow.Set(fieldDescriptions[idx].Name, nil)
+						continue
+					}
 					mappedRow.Set(fieldDescriptions[idx].Name, string(val))
 				}
 
