@@ -40,9 +40,9 @@ type headers struct {
 //	RawTextOutput: false
 //	ArrayMode: false
 //	PoolOptIn: false TODO(PER-14): implement connection pooling to reuse database connections and change this to default true
-//	BatchIsolationLevel: "ReadCommitted"
-//	BatchReadOnly: true
-//	BatchDeferrable: true
+//	BatchIsolationLevel: None -> will default to ReadCommitted
+//	BatchReadOnly: false
+//	BatchDeferrable: false
 func parseHeaders(r *http.Request) headers {
 	return headers{
 		ConnectionString: secret.NewSecret(strings.TrimSpace(r.Header.Get(ConnectionStringHeader))),
@@ -50,9 +50,9 @@ func parseHeaders(r *http.Request) headers {
 		ArrayMode:        headerOrDefault(r, ArrayModeHeader, "false", strings.TrimSpace, strings.ToLower) == "true",
 		// TODO(PER-14): implement connection pooling to reuse database connections and change this to default true
 		PoolOptIn:           headerOrDefault(r, PoolOptInHeader, "false", strings.TrimSpace, strings.ToLower) == "true",
-		BatchIsolationLevel: headerOrDefault(r, BatchIsolationLevelHeader, "ReadCommitted", strings.TrimSpace),
-		BatchReadOnly:       headerOrDefault(r, BatchReadOnlyHeader, "true", strings.TrimSpace, strings.ToLower) == "true",
-		BatchDeferrable:     headerOrDefault(r, BatchDeferrableHeader, "true", strings.TrimSpace, strings.ToLower) == "true",
+		BatchIsolationLevel: headerOrDefault(r, BatchIsolationLevelHeader, "", strings.TrimSpace),
+		BatchReadOnly:       headerOrDefault(r, BatchReadOnlyHeader, "false", strings.TrimSpace, strings.ToLower) == "true",
+		BatchDeferrable:     headerOrDefault(r, BatchDeferrableHeader, "false", strings.TrimSpace, strings.ToLower) == "true",
 	}
 }
 
