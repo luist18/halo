@@ -91,8 +91,26 @@ func pgValue(val any, fd pgconn.FieldDescription) (any, error) {
 		switch v := val.(type) {
 		case []byte:
 			val = string(v)
-		case bool:
-			val = val == "t"
+		case int64:
+			// Convert large integers to strings to preserve precision
+			// JavaScript's MAX_SAFE_INTEGER is 2^53 - 1 = 9007199254740991
+			if v > 9007199254740991 || v < -9007199254740991 {
+				val = fmt.Sprint(v)
+			}
+		case uint, uint32, uint64:
+			// For unsigned types, only check the upper bound
+			var uval uint64
+			switch uv := val.(type) {
+			case uint:
+				uval = uint64(uv)
+			case uint32:
+				uval = uint64(uv)
+			case uint64:
+				uval = uv
+			}
+			if uval > 9007199254740991 {
+				val = fmt.Sprint(uval)
+			}
 		}
 	}
 

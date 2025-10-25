@@ -37,8 +37,8 @@ type headers struct {
 //
 // Default values are the following:
 //
-//	RawTextOutput: true
-//	ArrayMode: true
+//	RawTextOutput: false
+//	ArrayMode: false
 //	PoolOptIn: false TODO(PER-14): implement connection pooling to reuse database connections and change this to default true
 //	BatchIsolationLevel: "ReadCommitted"
 //	BatchReadOnly: true
@@ -46,8 +46,8 @@ type headers struct {
 func parseHeaders(r *http.Request) headers {
 	return headers{
 		ConnectionString: secret.NewSecret(strings.TrimSpace(r.Header.Get(ConnectionStringHeader))),
-		RawTextOutput:    headerOrDefault(r, RawTextOutputHeader, "true", strings.TrimSpace, strings.ToLower) == "true",
-		ArrayMode:        headerOrDefault(r, ArrayModeHeader, "true", strings.TrimSpace, strings.ToLower) == "true",
+		RawTextOutput:    headerOrDefault(r, RawTextOutputHeader, "false", strings.TrimSpace, strings.ToLower) == "true",
+		ArrayMode:        headerOrDefault(r, ArrayModeHeader, "false", strings.TrimSpace, strings.ToLower) == "true",
 		// TODO(PER-14): implement connection pooling to reuse database connections and change this to default true
 		PoolOptIn:           headerOrDefault(r, PoolOptInHeader, "false", strings.TrimSpace, strings.ToLower) == "true",
 		BatchIsolationLevel: headerOrDefault(r, BatchIsolationLevelHeader, "ReadCommitted", strings.TrimSpace),

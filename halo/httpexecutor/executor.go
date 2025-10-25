@@ -291,41 +291,65 @@ func processRows(rows pgx.Rows, fieldDescriptions []pgconn.FieldDescription, opt
 	results := make([]any, 0)
 
 	for rows.Next() {
-		vals, err := rows.Values()
-		if err != nil {
-			return nil, err
-		}
+		if opts.RawTextOutput {
+			vals := rows.RawValues()
 
-		var row any
-		if opts.ArrayMode {
-			array := make([]any, len(vals))
-			for idx, val := range vals {
-				val, err = parseValue(val, opts.RawTextOutput, fieldDescriptions[idx])
-				if err != nil {
-					return nil, err
+			var row any
+			if opts.ArrayMode {
+				array := make([]any, len(vals))
+				for idx, val := range vals {
+					array[idx] = string(val)
 				}
 
-				array[idx] = val
+				row = array
+			} else {
+				mappedRow := NewOrderedMap()
 
+				for idx, val := range vals {
+					mappedRow.Set(fieldDescriptions[idx].Name, string(val))
+				}
+
+				row = mappedRow
 			}
 
-			row = array
+			results = append(results, row)
 		} else {
-			mappedRow := NewOrderedMap()
-
-			for idx, val := range vals {
-				val, err = parseValue(val, opts.RawTextOutput, fieldDescriptions[idx])
-				if err != nil {
-					return nil, err
-				}
-
-				mappedRow.Set(fieldDescriptions[idx].Name, val)
+			vals, err := rows.Values()
+			if err != nil {
+				return nil, err
 			}
 
-			row = mappedRow
-		}
+			var row any
+			if opts.ArrayMode {
+				array := make([]any, len(vals))
+				for idx, val := range vals {
+					val, err = parseValue(val, opts.RawTextOutput, fieldDescriptions[idx])
+					if err != nil {
+						return nil, err
+					}
 
-		results = append(results, row)
+					array[idx] = val
+
+				}
+
+				row = array
+			} else {
+				mappedRow := NewOrderedMap()
+
+				for idx, val := range vals {
+					val, err = parseValue(val, opts.RawTextOutput, fieldDescriptions[idx])
+					if err != nil {
+						return nil, err
+					}
+
+					mappedRow.Set(fieldDescriptions[idx].Name, val)
+				}
+
+				row = mappedRow
+			}
+
+			results = append(results, row)
+		}
 	}
 
 	return results, nil
