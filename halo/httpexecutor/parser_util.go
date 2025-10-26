@@ -10,6 +10,14 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const (
+	// MaxSafeInteger is JavaScript's MAX_SAFE_INTEGER (2^53 - 1)
+	// Beyond this value, JavaScript cannot safely represent integers
+	MaxSafeInteger = 9007199254740991
+	// MinSafeInteger is JavaScript's MIN_SAFE_INTEGER (-(2^53 - 1))
+	MinSafeInteger = -9007199254740991
+)
+
 type field struct {
 	Name             string `json:"name"`
 	DataTypeID       uint32 `json:"dataTypeID"`
@@ -43,7 +51,7 @@ func pgValue(val any, fd pgconn.FieldDescription) (any, error) {
 	if ok {
 		jsonBytes, err := marshaller.MarshalJSON()
 		if err != nil {
-			return ExecutorResponse{}, err
+			return nil, err
 		}
 		val = string(jsonBytes)
 		return val, nil
@@ -60,7 +68,7 @@ func pgValue(val any, fd pgconn.FieldDescription) (any, error) {
 		case map[string]any:
 			marshalled, err := json.Marshal(v)
 			if err != nil {
-				return ExecutorResponse{}, err
+				return nil, err
 			}
 			valStr = string(marshalled)
 		case string:
@@ -69,7 +77,7 @@ func pgValue(val any, fd pgconn.FieldDescription) (any, error) {
 			valStr = fmt.Sprint(v)
 		}
 		if err := json.Unmarshal([]byte(valStr), &jsonVal); err != nil {
-			return ExecutorResponse{}, err
+			return nil, err
 		}
 		val = jsonVal
 	} else {
@@ -91,8 +99,7 @@ func pgValue(val any, fd pgconn.FieldDescription) (any, error) {
 			}
 		case int64:
 			// Convert large integers to strings to preserve precision
-			// JavaScript's MAX_SAFE_INTEGER is 2^53 - 1 = 9007199254740991
-			if v > 9007199254740991 || v < -9007199254740991 {
+			if v > MaxSafeInteger || v < MinSafeInteger {
 				val = fmt.Sprint(v)
 			}
 		case uint, uint32, uint64:
@@ -106,7 +113,7 @@ func pgValue(val any, fd pgconn.FieldDescription) (any, error) {
 			case uint64:
 				uval = uv
 			}
-			if uval > 9007199254740991 {
+			if uval > MaxSafeInteger {
 				val = fmt.Sprint(uval)
 			}
 		case pgtype.Numeric:

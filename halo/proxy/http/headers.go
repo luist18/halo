@@ -4,14 +4,14 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/luist18/halo/internal/secret"
+	"github.com/luist18/halo/internal/data"
 )
 
 // headers represents HTTP headers sent by the client.
 type headers struct {
 	// ConnectionString holds the database connection string as a secret.
 	// Use Unwrap() to get the actual value. This avoids leaking it in logs.
-	ConnectionString *secret.Secret
+	ConnectionString *data.Secret
 
 	// RawTextOutput controls whether results are returned in raw text format.
 	RawTextOutput bool
@@ -45,7 +45,7 @@ type headers struct {
 //	BatchDeferrable: false
 func parseHeaders(r *http.Request) headers {
 	return headers{
-		ConnectionString: secret.NewSecret(strings.TrimSpace(r.Header.Get(ConnectionStringHeader))),
+		ConnectionString: data.NewSecret(strings.TrimSpace(r.Header.Get(ConnectionStringHeader))),
 		RawTextOutput:    headerOrDefault(r, RawTextOutputHeader, "false", strings.TrimSpace, strings.ToLower) == "true",
 		ArrayMode:        headerOrDefault(r, ArrayModeHeader, "false", strings.TrimSpace, strings.ToLower) == "true",
 		// TODO(PER-14): implement connection pooling to reuse database connections and change this to default true

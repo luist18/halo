@@ -1,4 +1,4 @@
-package httpexecutor
+package data
 
 import (
 	"encoding/json"
@@ -238,4 +238,3 @@ func TestOrderedMap_JSONMarshal_InSlice(t *testing.T) {
 		t.Errorf("json.Marshal() = %q, want %q", string(result), expected)
 	}
 }
-

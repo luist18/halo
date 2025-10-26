@@ -1,4 +1,4 @@
-package secret
+package data
 
 // Secret is a wrapper around a string that redacts the value in the String() method.
 // It is used to store sensitive information like connection strings.

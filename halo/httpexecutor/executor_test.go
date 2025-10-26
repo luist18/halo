@@ -8,7 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/luist18/halo/internal/secret"
+	"github.com/luist18/halo/internal/data"
 )
 
 func TestPgValue(t *testing.T) {
@@ -400,7 +400,7 @@ func TestExecute_PoolOptInNotImplemented(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			connStr := secret.NewSecret("postgres://user:password@localhost:5432/dbname")
+			connStr := data.NewSecret("postgres://user:password@localhost:5432/dbname")
 			payload := Payload{
 				Query:  "SELECT 1",
 				Params: []interface{}{},

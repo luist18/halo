@@ -3,16 +3,20 @@ package httpexecutor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/luist18/halo/internal/secret"
+	"github.com/luist18/halo/internal/data"
 )
 
 var (
 	ErrInvalidQueryMode        = errors.New("invalid query mode")
 	ErrPoolOptInNotImplemented = errors.New("connection pooling is not yet implemented")
+	ErrInvalidPayload          = errors.New("invalid payload: both query and queries provided")
+	ErrEmptyPayload            = errors.New("invalid payload: neither query nor queries provided")
+	ErrInvalidIsolationLevel   = errors.New("invalid transaction isolation level")
 )
 
 type Options struct {
@@ -90,42 +94,35 @@ func (b *BatchQueryResult) GetHeaders() map[string]string {
 	return headers
 }
 
-func Execute(ctx context.Context, connStrSecret secret.Secret, payload Payload, opts Options) (Result, error) {
+func Execute(ctx context.Context, connStrSecret data.Secret, payload Payload, opts Options) (Result, error) {
 	// TODO(PER-14): implement connection pooling to reuse database connections
 	// Pool opt-in is currently not supported
 	if opts.PoolOptIn {
 		return nil, ErrPoolOptInNotImplemented
 	}
 
-	config, err := pgx.ParseConfig(connStrSecret.Unwrap())
-	if err != nil {
+	if err := validatePayload(payload); err != nil {
 		return nil, err
 	}
-	config.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
 
-	conn, err := pgx.ConnectConfig(ctx, config)
+	conn, err := createConnection(ctx, connStrSecret)
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		err := conn.Close(ctx)
-		if err != nil {
-			slog.Error("failed to close connection", slog.String("error", err.Error()))
-		}
-	}()
+	defer closeConnection(ctx, conn)
 
 	queryMode := getQueryMode(payload)
 	switch queryMode {
 	case QueryModeSingle:
 		resp, err := executeQuery(ctx, conn, payload.Query, payload.Params, opts)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to execute query: %w", err)
 		}
 		return &SingleQueryResult{Response: resp}, nil
 	case QueryModeBatch:
 		results, err := executeBatchQuery(ctx, conn, payload.Queries, opts)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to execute batch query: %w", err)
 		}
 		return &BatchQueryResult{
 			Responses:      results,
@@ -156,6 +153,49 @@ func getQueryMode(payload Payload) QueryMode {
 	return QueryModeSingle
 }
 
+// validatePayload checks if the payload is valid and returns a descriptive error if not
+func validatePayload(payload Payload) error {
+	hasQuery := payload.Query != ""
+	hasQueries := len(payload.Queries) > 0
+
+	if hasQuery && hasQueries {
+		return ErrInvalidPayload
+	}
+
+	if !hasQuery && !hasQueries {
+		return ErrEmptyPayload
+	}
+
+	return nil
+}
+
+// createConnection establishes a new database connection with the given connection string
+func createConnection(ctx context.Context, connStrSecret data.Secret) (*pgx.Conn, error) {
+	config, err := pgx.ParseConfig(connStrSecret.Unwrap())
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse connection string: %w", err)
+	}
+	config.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+
+	conn, err := pgx.ConnectConfig(ctx, config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	return conn, nil
+}
+
+// closeConnection safely closes a database connection
+func closeConnection(ctx context.Context, conn *pgx.Conn) {
+	if conn == nil {
+		return
+	}
+
+	if err := conn.Close(ctx); err != nil {
+		slog.Error("failed to close connection", slog.String("error", err.Error()))
+	}
+}
+
 func parseIsolationLevel(level string) (pgx.TxIsoLevel, error) {
 	switch level {
 	case "ReadUncommitted":
@@ -173,49 +213,11 @@ func parseIsolationLevel(level string) (pgx.TxIsoLevel, error) {
 	}
 }
 
-type queryExecutor interface {
-	Query(ctx context.Context, query string, args ...any) (pgx.Rows, error)
-}
-
-func executeQuery(ctx context.Context, conn queryExecutor, query string, params []interface{}, opts Options) (ExecutorResponse, error) {
-	rows, err := conn.Query(ctx, query, params...)
-	if err != nil {
-		return ExecutorResponse{}, err
-	}
-	defer rows.Close()
-
-	fieldDescriptions := rows.FieldDescriptions()
-	fields := fields(fieldDescriptions)
-
-	results, err := processRows(rows, fieldDescriptions, opts)
-	if err != nil {
-		return ExecutorResponse{}, err
-	}
-
-	if err := rows.Err(); err != nil {
-		return ExecutorResponse{}, err
-	}
-
-	// For SELECT queries, rowCount is the number of rows returned
-	// For INSERT/UPDATE/DELETE, rowCount is the number of rows affected
-	rowCount := len(results)
-	if rows.CommandTag().RowsAffected() > 0 {
-		rowCount = int(rows.CommandTag().RowsAffected())
-	}
-
-	return ExecutorResponse{
-		Fields:     fields,
-		Rows:       results,
-		Command:    parseCommand(rows.CommandTag().String()),
-		RowCount:   rowCount,
-		RowAsArray: opts.ArrayMode,
-	}, nil
-}
-
-func executeBatchQuery(ctx context.Context, conn *pgx.Conn, queries MultiQueryPayload, opts Options) ([]ExecutorResponse, error) {
+// buildTxOptions constructs transaction options from the provided Options
+func buildTxOptions(opts Options) (pgx.TxOptions, error) {
 	isolationLevel, err := parseIsolationLevel(opts.BatchIsolationLevel)
 	if err != nil {
-		return nil, err
+		return pgx.TxOptions{}, fmt.Errorf("invalid transaction isolation level: %w", err)
 	}
 
 	txOpts := pgx.TxOptions{
@@ -234,9 +236,56 @@ func executeBatchQuery(ctx context.Context, conn *pgx.Conn, queries MultiQueryPa
 		txOpts.DeferrableMode = pgx.NotDeferrable
 	}
 
-	tx, err := conn.BeginTx(ctx, txOpts)
+	return txOpts, nil
+}
+
+type queryExecutor interface {
+	Query(ctx context.Context, query string, args ...any) (pgx.Rows, error)
+}
+
+func executeQuery(ctx context.Context, conn queryExecutor, query string, params []interface{}, opts Options) (ExecutorResponse, error) {
+	rows, err := conn.Query(ctx, query, params...)
+	if err != nil {
+		return ExecutorResponse{}, err
+	}
+	defer rows.Close()
+
+	fieldDescriptions := rows.FieldDescriptions()
+
+	results, err := processRows(rows, fieldDescriptions, opts)
+	if err != nil {
+		return ExecutorResponse{}, fmt.Errorf("failed to process rows: %w", err)
+	}
+
+	if err := rows.Err(); err != nil {
+		return ExecutorResponse{}, err
+	}
+
+	// For SELECT queries, rowCount is the number of rows returned
+	// For INSERT/UPDATE/DELETE, rowCount is the number of rows affected
+	rowCount := len(results)
+	if rows.CommandTag().RowsAffected() > 0 {
+		rowCount = int(rows.CommandTag().RowsAffected())
+	}
+
+	return ExecutorResponse{
+		Fields:     fields(fieldDescriptions),
+		Rows:       results,
+		Command:    parseCommand(rows.CommandTag().String()),
+		RowCount:   rowCount,
+		RowAsArray: opts.ArrayMode,
+	}, nil
+}
+
+func executeBatchQuery(ctx context.Context, conn *pgx.Conn, queries MultiQueryPayload, opts Options) ([]ExecutorResponse, error) {
+	txOpts, err := buildTxOptions(opts)
 	if err != nil {
 		return nil, err
+	}
+
+	tx, err := conn.BeginTx(ctx, txOpts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
 
 	defer func() {
@@ -250,16 +299,16 @@ func executeBatchQuery(ctx context.Context, conn *pgx.Conn, queries MultiQueryPa
 
 	results := make([]ExecutorResponse, 0, len(queries))
 
-	for _, q := range queries {
+	for i, q := range queries {
 		resp, err := executeQuery(ctx, tx, q.Query, q.Params, opts)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to execute query %d in batch: %w", i+1, err)
 		}
 		results = append(results, resp)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	tx = nil
@@ -317,7 +366,8 @@ func processTypedValues(vals []any, fieldDescriptions []pgconn.FieldDescription)
 	for idx, val := range vals {
 		processedVal, err := pgValue(val, fieldDescriptions[idx])
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to process value at column %d (%s): %w",
+				idx, fieldDescriptions[idx].Name, err)
 		}
 		processedValues[idx] = processedVal
 	}
@@ -331,7 +381,7 @@ func buildRow(values []any, fieldDescriptions []pgconn.FieldDescription, arrayMo
 		return values
 	}
 
-	mappedRow := NewOrderedMap()
+	mappedRow := data.NewOrderedMap()
 	for idx, val := range values {
 		mappedRow.Set(fieldDescriptions[idx].Name, val)
 	}
