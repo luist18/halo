@@ -37,28 +37,6 @@ func fields(fds []pgconn.FieldDescription) []field {
 	return fields
 }
 
-func pgRawValue(val any) (any, error) {
-	// In raw output mode, convert all values to strings
-	switch v := val.(type) {
-	case []byte:
-		val = string(v)
-	case map[string]any, []any:
-		// JSON-encode complex types instead of using fmt.Sprint
-		jsonBytes, err := json.Marshal(v)
-		if err != nil {
-			return ExecutorResponse{}, err
-		}
-		val = string(jsonBytes)
-	case time.Time:
-		// Use ISO 8601 format for consistency
-		val = v.Format(time.RFC3339)
-	default:
-		val = fmt.Sprint(v)
-	}
-
-	return val, nil
-}
-
 func pgValue(val any, fd pgconn.FieldDescription) (any, error) {
 	// TODO: remove this, this is a catch all as most if not all types will implement this
 	marshaller, ok := val.(json.Marshaler)
