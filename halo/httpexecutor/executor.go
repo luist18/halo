@@ -117,7 +117,7 @@ func Execute(ctx context.Context, connStrSecret secret.Secret, payload Payload, 
 	queryMode := getQueryMode(payload)
 	switch queryMode {
 	case QueryModeSingle:
-		resp, err := executeSingleQuery(ctx, conn, payload.Query, payload.Params, opts)
+		resp, err := executeQuery(ctx, conn, payload.Query, payload.Params, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -173,7 +173,11 @@ func parseIsolationLevel(level string) (pgx.TxIsoLevel, error) {
 	}
 }
 
-func executeSingleQuery(ctx context.Context, conn *pgx.Conn, query string, params []interface{}, opts Options) (ExecutorResponse, error) {
+type queryExecutor interface {
+	Query(ctx context.Context, query string, args ...any) (pgx.Rows, error)
+}
+
+func executeQuery(ctx context.Context, conn queryExecutor, query string, params []interface{}, opts Options) (ExecutorResponse, error) {
 	rows, err := conn.Query(ctx, query, params...)
 	if err != nil {
 		return ExecutorResponse{}, err
@@ -183,37 +187,6 @@ func executeSingleQuery(ctx context.Context, conn *pgx.Conn, query string, param
 	fieldDescriptions := rows.FieldDescriptions()
 	fields := fields(fieldDescriptions)
 
-	// Process rows
-	results, err := processRows(rows, fieldDescriptions, opts)
-	if err != nil {
-		return ExecutorResponse{}, err
-	}
-
-	// {"fields":[{"name":"jsonb","dataTypeID":3802,"tableID":0,"columnID":0,"dataTypeSize":-1,"dataTypeModifier":-1,"format":"text"}],"rows":[["map[t:4]"]],"command":"SELECT","rowCount":1,"rowsAsArray":true}
-
-	if err := rows.Err(); err != nil {
-		return ExecutorResponse{}, err
-	}
-
-	return ExecutorResponse{
-		Fields:     fields,
-		Rows:       results,
-		Command:    parseCommand(rows.CommandTag().String()),
-		RowCount:   len(results),
-		RowAsArray: opts.ArrayMode,
-	}, nil
-}
-
-func executeSingleQueryInTx(ctx context.Context, tx pgx.Tx, query string, params []interface{}, opts Options) (ExecutorResponse, error) {
-	rows, err := tx.Query(ctx, query, params...)
-	if err != nil {
-		return ExecutorResponse{}, err
-	}
-	defer rows.Close()
-
-	fieldDescriptions := rows.FieldDescriptions()
-	fields := fields(fieldDescriptions)
-
 	results, err := processRows(rows, fieldDescriptions, opts)
 	if err != nil {
 		return ExecutorResponse{}, err
@@ -223,11 +196,18 @@ func executeSingleQueryInTx(ctx context.Context, tx pgx.Tx, query string, params
 		return ExecutorResponse{}, err
 	}
 
+	// For SELECT queries, rowCount is the number of rows returned
+	// For INSERT/UPDATE/DELETE, rowCount is the number of rows affected
+	rowCount := len(results)
+	if rows.CommandTag().RowsAffected() > 0 {
+		rowCount = int(rows.CommandTag().RowsAffected())
+	}
+
 	return ExecutorResponse{
 		Fields:     fields,
 		Rows:       results,
 		Command:    parseCommand(rows.CommandTag().String()),
-		RowCount:   len(results),
+		RowCount:   rowCount,
 		RowAsArray: opts.ArrayMode,
 	}, nil
 }
@@ -271,7 +251,7 @@ func executeBatchQuery(ctx context.Context, conn *pgx.Conn, queries MultiQueryPa
 	results := make([]ExecutorResponse, 0, len(queries))
 
 	for _, q := range queries {
-		resp, err := executeSingleQueryInTx(ctx, tx, q.Query, q.Params, opts)
+		resp, err := executeQuery(ctx, tx, q.Query, q.Params, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -290,76 +270,71 @@ func executeBatchQuery(ctx context.Context, conn *pgx.Conn, queries MultiQueryPa
 func processRows(rows pgx.Rows, fieldDescriptions []pgconn.FieldDescription, opts Options) ([]any, error) {
 	results := make([]any, 0)
 
-	// TODO: refacor this ugly and repeated logic, just leaving it this way as we fix some parsing issues
 	for rows.Next() {
-		if opts.RawTextOutput {
-			vals := rows.RawValues()
-
-			var row any
-			if opts.ArrayMode {
-				array := make([]any, len(vals))
-				for idx, val := range vals {
-					if val == nil {
-						array[idx] = nil
-						continue
-					}
-					array[idx] = string(val)
-				}
-
-				row = array
-			} else {
-				mappedRow := NewOrderedMap()
-
-				for idx, val := range vals {
-					if val == nil {
-						mappedRow.Set(fieldDescriptions[idx].Name, nil)
-						continue
-					}
-					mappedRow.Set(fieldDescriptions[idx].Name, string(val))
-				}
-
-				row = mappedRow
-			}
-
-			results = append(results, row)
-		} else {
-			vals, err := rows.Values()
-			if err != nil {
-				return nil, err
-			}
-
-			var row any
-			if opts.ArrayMode {
-				array := make([]any, len(vals))
-				for idx, val := range vals {
-					val, err = parseValue(val, opts.RawTextOutput, fieldDescriptions[idx])
-					if err != nil {
-						return nil, err
-					}
-
-					array[idx] = val
-
-				}
-
-				row = array
-			} else {
-				mappedRow := NewOrderedMap()
-
-				for idx, val := range vals {
-					val, err = parseValue(val, opts.RawTextOutput, fieldDescriptions[idx])
-					if err != nil {
-						return nil, err
-					}
-
-					mappedRow.Set(fieldDescriptions[idx].Name, val)
-				}
-
-				row = mappedRow
-			}
-
-			results = append(results, row)
+		values, err := extractAndProcessValues(rows, fieldDescriptions, opts.RawTextOutput)
+		if err != nil {
+			return nil, err
 		}
+
+		row := buildRow(values, fieldDescriptions, opts.ArrayMode)
+		results = append(results, row)
 	}
 
 	return results, nil
+}
+
+// extractAndProcessValues retrieves values from the row and processes them based on output mode
+func extractAndProcessValues(rows pgx.Rows, fieldDescriptions []pgconn.FieldDescription, rawTextOutput bool) ([]any, error) {
+	if rawTextOutput {
+		return processRawValues(rows.RawValues()), nil
+	}
+
+	vals, err := rows.Values()
+	if err != nil {
+		return nil, err
+	}
+
+	return processTypedValues(vals, fieldDescriptions)
+}
+
+// processRawValues converts raw byte slices to strings (for raw text output mode)
+func processRawValues(rawValues [][]byte) []any {
+	values := make([]any, len(rawValues))
+	for idx, rawVal := range rawValues {
+		if rawVal == nil {
+			values[idx] = nil
+		} else {
+			values[idx] = string(rawVal)
+		}
+	}
+	return values
+}
+
+// processTypedValues applies type-specific transformations using pgValue
+func processTypedValues(vals []any, fieldDescriptions []pgconn.FieldDescription) ([]any, error) {
+	processedValues := make([]any, len(vals))
+
+	for idx, val := range vals {
+		processedVal, err := pgValue(val, fieldDescriptions[idx])
+		if err != nil {
+			return nil, err
+		}
+		processedValues[idx] = processedVal
+	}
+
+	return processedValues, nil
+}
+
+// buildRow constructs a row as either an array or an object (OrderedMap)
+func buildRow(values []any, fieldDescriptions []pgconn.FieldDescription, arrayMode bool) any {
+	if arrayMode {
+		return values
+	}
+
+	mappedRow := NewOrderedMap()
+	for idx, val := range values {
+		mappedRow.Set(fieldDescriptions[idx].Name, val)
+	}
+
+	return mappedRow
 }

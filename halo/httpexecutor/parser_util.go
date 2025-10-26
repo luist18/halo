@@ -60,7 +60,16 @@ func pgRawValue(val any) (any, error) {
 }
 
 func pgValue(val any, fd pgconn.FieldDescription) (any, error) {
-	// In normal mode, perform type-specific conversions
+	// TODO: remove this, this is a catch all as most if not all types will implement this
+	marshaller, ok := val.(json.Marshaler)
+	if ok {
+		jsonBytes, err := marshaller.MarshalJSON()
+		if err != nil {
+			return ExecutorResponse{}, err
+		}
+		val = string(jsonBytes)
+		return val, nil
+	}
 
 	// Check if it's JSON or JSONB type
 	if fd.DataTypeOID == pgtype.JSONOID || fd.DataTypeOID == pgtype.JSONBOID {
@@ -91,6 +100,17 @@ func pgValue(val any, fd pgconn.FieldDescription) (any, error) {
 		switch v := val.(type) {
 		case []byte:
 			val = string(v)
+		case time.Time:
+			switch fd.DataTypeOID {
+			case pgtype.TimestampOID:
+				val = v.Format("2006-01-02 15:04:05")
+			case pgtype.TimestamptzOID:
+				val = v.Format("2006-01-02 15:04:05.000000-07")
+			case pgtype.DateOID:
+				val = v.Format("2006-01-02")
+			case pgtype.TimeOID:
+				val = v.Format("15:04:05.000000-07")
+			}
 		case int64:
 			// Convert large integers to strings to preserve precision
 			// JavaScript's MAX_SAFE_INTEGER is 2^53 - 1 = 9007199254740991
@@ -111,26 +131,11 @@ func pgValue(val any, fd pgconn.FieldDescription) (any, error) {
 			if uval > 9007199254740991 {
 				val = fmt.Sprint(uval)
 			}
+		case pgtype.Numeric:
+			numeric := val.(pgtype.Numeric)
+			numbytes, _ := numeric.MarshalJSON()
+			val = string(numbytes)
 		}
-	}
-
-	return val, nil
-}
-
-func parseValue(val any, rawTextOutput bool, fd pgconn.FieldDescription) (any, error) {
-	var err error
-	if rawTextOutput {
-		val, err = pgRawValue(val)
-		if err != nil {
-			return nil, err
-		}
-
-		return val, nil
-	}
-
-	val, err = pgValue(val, fd)
-	if err != nil {
-		return nil, err
 	}
 
 	return val, nil
