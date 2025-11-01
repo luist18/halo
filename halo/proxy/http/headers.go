@@ -13,13 +13,6 @@ type headers struct {
 	// Use Unwrap() to get the actual value. This avoids leaking it in logs.
 	ConnectionString *data.Secret
 
-	// RawTextOutput controls whether results are returned in raw text format.
-	RawTextOutput bool
-
-	// ArrayMode controls whether results are returned as an array, which
-	// is more compact and saves bandwidth.
-	ArrayMode bool
-
 	// PoolOptIn indicates whether to reuse connections via a connection pool.
 	PoolOptIn bool
 
@@ -37,8 +30,6 @@ type headers struct {
 //
 // Default values are the following:
 //
-//	RawTextOutput: false
-//	ArrayMode: false
 //	PoolOptIn: false TODO(PER-14): implement connection pooling to reuse database connections and change this to default true
 //	BatchIsolationLevel: None -> will default to ReadCommitted
 //	BatchReadOnly: false
@@ -46,8 +37,6 @@ type headers struct {
 func parseHeaders(r *http.Request) headers {
 	return headers{
 		ConnectionString: data.NewSecret(strings.TrimSpace(r.Header.Get(ConnectionStringHeader))),
-		RawTextOutput:    headerOrDefault(r, RawTextOutputHeader, "false", strings.TrimSpace, strings.ToLower) == "true",
-		ArrayMode:        headerOrDefault(r, ArrayModeHeader, "false", strings.TrimSpace, strings.ToLower) == "true",
 		// TODO(PER-14): implement connection pooling to reuse database connections and change this to default true
 		PoolOptIn:           headerOrDefault(r, PoolOptInHeader, "false", strings.TrimSpace, strings.ToLower) == "true",
 		BatchIsolationLevel: headerOrDefault(r, BatchIsolationLevelHeader, "", strings.TrimSpace),

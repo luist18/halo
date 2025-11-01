@@ -19,8 +19,6 @@ const (
 	RequestStartTimeContextKey contextKey = "request-start-time"
 
 	ConnectionStringHeader    = "Neon-Connection-String"
-	RawTextOutputHeader       = "Neon-Raw-Text-Output"
-	ArrayModeHeader           = "Neon-Array-Mode"
 	PoolOptInHeader           = "Neon-Pool-Opt-In"
 	BatchIsolationLevelHeader = "Neon-Batch-Isolation-Level"
 	BatchReadOnlyHeader       = "Neon-Batch-Read-Only"
@@ -92,8 +90,6 @@ func (p *HttpProxy) handleSQL(w http.ResponseWriter, r *http.Request) error {
 		}
 
 		opts := httpexecutor.Options{
-			RawTextOutput:       headers.RawTextOutput,
-			ArrayMode:           headers.ArrayMode,
 			PoolOptIn:           headers.PoolOptIn,
 			BatchIsolationLevel: headers.BatchIsolationLevel,
 			BatchReadOnly:       headers.BatchReadOnly,

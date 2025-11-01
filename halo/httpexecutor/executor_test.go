@@ -18,8 +18,6 @@ func TestExecute_PoolOptInNotImplemented(t *testing.T) {
 		{
 			name: "pool opt-in enabled returns error",
 			opts: Options{
-				RawTextOutput:       true,
-				ArrayMode:           true,
 				PoolOptIn:           true,
 				BatchIsolationLevel: "ReadCommitted",
 				BatchReadOnly:       false,
@@ -31,8 +29,6 @@ func TestExecute_PoolOptInNotImplemented(t *testing.T) {
 		{
 			name: "pool opt-in disabled should not return error for pool feature",
 			opts: Options{
-				RawTextOutput:       true,
-				ArrayMode:           true,
 				PoolOptIn:           false,
 				BatchIsolationLevel: "ReadCommitted",
 				BatchReadOnly:       false,

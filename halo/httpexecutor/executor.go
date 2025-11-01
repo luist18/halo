@@ -20,8 +20,6 @@ var (
 )
 
 type Options struct {
-	RawTextOutput       bool
-	ArrayMode           bool
 	PoolOptIn           bool
 	BatchIsolationLevel string
 	BatchReadOnly       bool
@@ -252,7 +250,7 @@ func executeQuery(ctx context.Context, conn queryExecutor, query string, params 
 
 	fieldDescriptions := rows.FieldDescriptions()
 
-	results, err := processRows(rows, fieldDescriptions, opts)
+	results, err := processRows(rows, fieldDescriptions)
 	if err != nil {
 		return ExecutorResponse{}, fmt.Errorf("failed to process rows: %w", err)
 	}
@@ -273,7 +271,7 @@ func executeQuery(ctx context.Context, conn queryExecutor, query string, params 
 		Rows:       results,
 		Command:    parseCommand(rows.CommandTag().String()),
 		RowCount:   rowCount,
-		RowAsArray: opts.ArrayMode,
+		RowAsArray: true,
 	}, nil
 }
 
@@ -316,34 +314,18 @@ func executeBatchQuery(ctx context.Context, conn *pgx.Conn, queries MultiQueryPa
 	return results, nil
 }
 
-func processRows(rows pgx.Rows, fieldDescriptions []pgconn.FieldDescription, opts Options) ([]any, error) {
+func processRows(rows pgx.Rows, fieldDescriptions []pgconn.FieldDescription) ([]any, error) {
 	results := make([]any, 0)
 
 	for rows.Next() {
-		values, err := extractAndProcessValues(rows, fieldDescriptions, opts.RawTextOutput)
-		if err != nil {
-			return nil, err
-		}
-
-		row := buildRow(values, fieldDescriptions, opts.ArrayMode)
+		values := processRawValues(rows.RawValues())
+		// Array mode is always enabled, that's the default for the serverless driver
+		// https://github.com/neondatabase/serverless/blob/2c51902827a043df0646caf6a5ed8d812e7fb9b6/src/httpQuery.ts#L353
+		row := buildRow(values, fieldDescriptions, true)
 		results = append(results, row)
 	}
 
 	return results, nil
-}
-
-// extractAndProcessValues retrieves values from the row and processes them based on output mode
-func extractAndProcessValues(rows pgx.Rows, fieldDescriptions []pgconn.FieldDescription, rawTextOutput bool) ([]any, error) {
-	if rawTextOutput {
-		return processRawValues(rows.RawValues()), nil
-	}
-
-	vals, err := rows.Values()
-	if err != nil {
-		return nil, err
-	}
-
-	return processTypedValues(vals, fieldDescriptions)
 }
 
 // processRawValues converts raw byte slices to strings (for raw text output mode)
@@ -357,22 +339,6 @@ func processRawValues(rawValues [][]byte) []any {
 		}
 	}
 	return values
-}
-
-// processTypedValues applies type-specific transformations using pgValue
-func processTypedValues(vals []any, fieldDescriptions []pgconn.FieldDescription) ([]any, error) {
-	processedValues := make([]any, len(vals))
-
-	for idx, val := range vals {
-		processedVal, err := pgValue(val, fieldDescriptions[idx])
-		if err != nil {
-			return nil, fmt.Errorf("failed to process value at column %d (%s): %w",
-				idx, fieldDescriptions[idx].Name, err)
-		}
-		processedValues[idx] = processedVal
-	}
-
-	return processedValues, nil
 }
 
 // buildRow constructs a row as either an array or an object (OrderedMap)
