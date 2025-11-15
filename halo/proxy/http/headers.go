@@ -30,15 +30,14 @@ type headers struct {
 //
 // Default values are the following:
 //
-//	PoolOptIn: false TODO(PER-14): implement connection pooling to reuse database connections and change this to default true
+//	PoolOptIn: true
 //	BatchIsolationLevel: None -> will default to ReadCommitted
 //	BatchReadOnly: false
 //	BatchDeferrable: false
 func parseHeaders(r *http.Request) headers {
 	return headers{
-		ConnectionString: data.NewSecret(strings.TrimSpace(r.Header.Get(ConnectionStringHeader))),
-		// TODO(PER-14): implement connection pooling to reuse database connections and change this to default true
-		PoolOptIn:           headerOrDefault(r, PoolOptInHeader, "false", strings.TrimSpace, strings.ToLower) == "true",
+		ConnectionString:    data.NewSecret(strings.TrimSpace(r.Header.Get(ConnectionStringHeader))),
+		PoolOptIn:           headerOrDefault(r, PoolOptInHeader, "true", strings.TrimSpace, strings.ToLower) == "true",
 		BatchIsolationLevel: headerOrDefault(r, BatchIsolationLevelHeader, "", strings.TrimSpace),
 		BatchReadOnly:       headerOrDefault(r, BatchReadOnlyHeader, "false", strings.TrimSpace, strings.ToLower) == "true",
 		BatchDeferrable:     headerOrDefault(r, BatchDeferrableHeader, "false", strings.TrimSpace, strings.ToLower) == "true",
