@@ -12,11 +12,16 @@ import (
 )
 
 var (
-	ErrInvalidQueryMode        = errors.New("invalid query mode")
-	ErrPoolOptInNotImplemented = errors.New("connection pooling is not yet implemented")
-	ErrInvalidPayload          = errors.New("invalid payload: both query and queries provided")
-	ErrEmptyPayload            = errors.New("invalid payload: neither query nor queries provided")
-	ErrInvalidIsolationLevel   = errors.New("invalid transaction isolation level")
+	ErrInvalidQueryMode      = errors.New("invalid query mode")
+	ErrInvalidPayload        = errors.New("invalid payload: both query and queries provided")
+	ErrEmptyPayload          = errors.New("invalid payload: neither query nor queries provided")
+	ErrInvalidIsolationLevel = errors.New("invalid transaction isolation level")
+)
+
+var (
+	acquireConnectionFn = acquireConnection
+	executeQueryFn      = executeQuery
+	executeBatchQueryFn = executeBatchQuery
 )
 
 type Options struct {
@@ -93,32 +98,26 @@ func (b *BatchQueryResult) GetHeaders() map[string]string {
 }
 
 func Execute(ctx context.Context, connStrSecret data.Secret, payload Payload, opts Options) (Result, error) {
-	// TODO(PER-14): implement connection pooling to reuse database connections
-	// Pool opt-in is currently not supported
-	if opts.PoolOptIn {
-		return nil, ErrPoolOptInNotImplemented
-	}
-
 	if err := validatePayload(payload); err != nil {
 		return nil, err
 	}
 
-	conn, err := createConnection(ctx, connStrSecret)
+	conn, err := acquireConnectionFn(ctx, connStrSecret, opts.PoolOptIn)
 	if err != nil {
 		return nil, err
 	}
-	defer closeConnection(ctx, conn)
+	defer closeManagedConnection(ctx, conn)
 
 	queryMode := getQueryMode(payload)
 	switch queryMode {
 	case QueryModeSingle:
-		resp, err := executeQuery(ctx, conn, payload.Query, payload.Params, opts)
+		resp, err := executeQueryFn(ctx, conn, payload.Query, payload.Params, opts)
 		if err != nil {
 			return nil, fmt.Errorf("failed to execute query: %w", err)
 		}
 		return &SingleQueryResult{Response: resp}, nil
 	case QueryModeBatch:
-		results, err := executeBatchQuery(ctx, conn, payload.Queries, opts)
+		results, err := executeBatchQueryFn(ctx, conn, payload.Queries, opts)
 		if err != nil {
 			return nil, fmt.Errorf("failed to execute batch query: %w", err)
 		}
@@ -181,17 +180,6 @@ func createConnection(ctx context.Context, connStrSecret data.Secret) (*pgx.Conn
 	}
 
 	return conn, nil
-}
-
-// closeConnection safely closes a database connection
-func closeConnection(ctx context.Context, conn *pgx.Conn) {
-	if conn == nil {
-		return
-	}
-
-	if err := conn.Close(ctx); err != nil {
-		slog.Error("failed to close connection", slog.String("error", err.Error()))
-	}
 }
 
 func parseIsolationLevel(level string) (pgx.TxIsoLevel, error) {
@@ -275,7 +263,7 @@ func executeQuery(ctx context.Context, conn queryExecutor, query string, params 
 	}, nil
 }
 
-func executeBatchQuery(ctx context.Context, conn *pgx.Conn, queries MultiQueryPayload, opts Options) ([]ExecutorResponse, error) {
+func executeBatchQuery(ctx context.Context, conn managedConn, queries MultiQueryPayload, opts Options) ([]ExecutorResponse, error) {
 	txOpts, err := buildTxOptions(opts)
 	if err != nil {
 		return nil, err

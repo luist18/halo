@@ -2,69 +2,94 @@ package httpexecutor
 
 import (
 	"context"
-	"errors"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/luist18/halo/internal/data"
+	"github.com/stretchr/testify/require"
 )
 
-func TestExecute_PoolOptInNotImplemented(t *testing.T) {
-	tests := []struct {
-		name      string
-		opts      Options
-		wantErr   error
-		shouldErr bool
-	}{
-		{
-			name: "pool opt-in enabled returns error",
-			opts: Options{
-				PoolOptIn:           true,
-				BatchIsolationLevel: "ReadCommitted",
-				BatchReadOnly:       false,
-				BatchDeferrable:     false,
-			},
-			wantErr:   ErrPoolOptInNotImplemented,
-			shouldErr: true,
-		},
-		{
-			name: "pool opt-in disabled should not return error for pool feature",
-			opts: Options{
-				PoolOptIn:           false,
-				BatchIsolationLevel: "ReadCommitted",
-				BatchReadOnly:       false,
-				BatchDeferrable:     false,
-			},
-			wantErr:   nil,
-			shouldErr: false,
-		},
+type stubManagedConn struct {
+	queryErr error
+	closed   bool
+}
+
+func (s *stubManagedConn) Query(ctx context.Context, query string, args ...any) (pgx.Rows, error) {
+	return nil, s.queryErr
+}
+
+func (s *stubManagedConn) BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error) {
+	return nil, nil
+}
+
+func (s *stubManagedConn) Close(ctx context.Context) error {
+	s.closed = true
+	return nil
+}
+
+func TestExecute_AcquiresConnectionAndRunsSingleQuery(t *testing.T) {
+	originalAcquire := acquireConnectionFn
+	originalExecuteQuery := executeQueryFn
+	defer func() {
+		acquireConnectionFn = originalAcquire
+		executeQueryFn = originalExecuteQuery
+	}()
+
+	conn := &stubManagedConn{}
+	var capturedPoolOptIn bool
+
+	acquireConnectionFn = func(ctx context.Context, secret data.Secret, poolOptIn bool) (managedConn, error) {
+		capturedPoolOptIn = poolOptIn
+		return conn, nil
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
-			connStr := data.NewSecret("postgres://user:password@localhost:5432/dbname")
-			payload := Payload{
-				Query:  "SELECT 1",
-				Params: []interface{}{},
-			}
-
-			_, err := Execute(ctx, *connStr, payload, tt.opts)
-
-			if tt.shouldErr {
-				if err == nil {
-					t.Errorf("Execute() expected error but got nil")
-					return
-				}
-				if !errors.Is(err, tt.wantErr) {
-					t.Errorf("Execute() error = %v, want %v", err, tt.wantErr)
-				}
-			} else if tt.opts.PoolOptIn {
-				// If PoolOptIn is false, we expect other errors (like connection errors)
-				// but NOT the ErrPoolOptInNotImplemented
-				if errors.Is(err, ErrPoolOptInNotImplemented) {
-					t.Errorf("Execute() should not return ErrPoolOptInNotImplemented when PoolOptIn is false, got: %v", err)
-				}
-			}
-		})
+	executeQueryFn = func(ctx context.Context, qc queryExecutor, query string, params []interface{}, opts Options) (ExecutorResponse, error) {
+		require.Equal(t, "SELECT 1", query)
+		return ExecutorResponse{RowCount: 1}, nil
 	}
+
+	result, err := Execute(context.Background(), *data.NewSecret("postgres://user:pass@localhost:5432/db"), Payload{
+		Query: "SELECT 1",
+	}, Options{
+		PoolOptIn: true,
+	})
+
+	require.NoError(t, err)
+	require.IsType(t, &SingleQueryResult{}, result)
+	require.True(t, capturedPoolOptIn)
+	require.True(t, conn.closed, "connection should have been closed")
+}
+
+func TestExecute_DelegatesToBatchExecutor(t *testing.T) {
+	originalAcquire := acquireConnectionFn
+	originalExecuteBatch := executeBatchQueryFn
+	defer func() {
+		acquireConnectionFn = originalAcquire
+		executeBatchQueryFn = originalExecuteBatch
+	}()
+
+	conn := &stubManagedConn{}
+	acquireConnectionFn = func(ctx context.Context, secret data.Secret, poolOptIn bool) (managedConn, error) {
+		return conn, nil
+	}
+
+	var batchCalled bool
+	executeBatchQueryFn = func(ctx context.Context, mc managedConn, queries MultiQueryPayload, opts Options) ([]ExecutorResponse, error) {
+		batchCalled = true
+		require.Len(t, queries, 1)
+		return []ExecutorResponse{
+			{RowCount: 1},
+		}, nil
+	}
+
+	result, err := Execute(context.Background(), *data.NewSecret("postgres://user:pass@localhost:5432/db"), Payload{
+		Queries: MultiQueryPayload{
+			{Query: "SELECT 1"},
+		},
+	}, Options{})
+
+	require.NoError(t, err)
+	require.True(t, batchCalled, "batch executor should be invoked")
+	require.IsType(t, &BatchQueryResult{}, result)
+	require.True(t, conn.closed, "connection should have been closed")
 }
